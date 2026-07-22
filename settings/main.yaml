@@ -3,6 +3,7 @@ defaults:
   - learning
   - v_sim_setting/default
   - p_net_setting/default
+  - failure_setting/default
 
 hydra:
   run:

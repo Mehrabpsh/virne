@@ -1,0 +1,36 @@
+if_enable: false          # off by default — must not change behavior for existing experiments
+
+node_failure:
+  mtbf:                    # mean time between failures, per node
+    distribution: exponential
+    dtype: float
+    scale: 5000
+  mttr:                    # mean time to repair (recovery), per failure
+    distribution: exponential
+    dtype: float
+    scale: 200
+  affected_fraction:        # fraction of p_net nodes eligible for failure at all
+    distribution: uniform
+    dtype: float
+    low: 0.05
+    high: 0.05              # point value; widen for randomized experiments
+
+link_failure:
+  mtbf:
+    distribution: exponential
+    dtype: float
+    scale: 8000
+  mttr:
+    distribution: exponential
+    dtype: float
+    scale: 150
+  affected_fraction:
+    distribution: uniform
+    dtype: float
+    low: 0.05
+    high: 0.05
+
+output:
+  save_dir: dataset/p_net_failures
+  events_file_name: failure_events.yaml
+  setting_file_name: failure_setting.yaml
