@@ -15,6 +15,8 @@ def run(config: DictConfig) -> None:
 
     if config.experiment.run_id == 'auto':
         config.experiment.run_id = generate_run_id()
+    from virne.reliability.config import validate_reliability_config
+    validate_reliability_config(config)
     add_simulation_into_config(config)
 
     system = BaseSystem.from_config(config)

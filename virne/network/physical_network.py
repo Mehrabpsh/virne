@@ -134,6 +134,10 @@ class PhysicalNetwork(BaseNetwork):
             net_instance.generate_topology(**topology_config)
         # Generate attributes for nodes and links
         net_instance.generate_attrs_data()
+        reliability = config.get('reliability') or {}
+        if reliability.get('enabled', False):
+            from virne.reliability.model import ReliabilityAttributeProvider
+            ReliabilityAttributeProvider(reliability).apply(net_instance, seed=seed)
         if isinstance(config, DictConfig):
             with open_dict(config):
                 config.topology.num_nodes = net_instance.num_nodes

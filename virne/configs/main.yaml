@@ -1,6 +1,7 @@
 defaults:
   - _self_
   - learning
+  - thesis
   - v_sim_setting/default
   - p_net_setting/default
 

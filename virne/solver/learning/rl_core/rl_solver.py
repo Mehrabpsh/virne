@@ -314,8 +314,10 @@ class RLSolver(Solver):
 
     def save_model(self, checkpoint_fname):
         checkpoint_fname = os.path.join(self.model_dir, checkpoint_fname)
+        from virne.reliability.features import feature_signature
         checkpoint = {
             'checkpoint_version': 2,
+            'reliability_feature_signature': feature_signature(self.config),
             'feature_schema_version': int(OmegaConf.select(
                 self.config,
                 'rl.feature_constructor.schema_version',
@@ -364,6 +366,13 @@ class RLSolver(Solver):
                 optimizer_state = None
                 feature_schema_version = None
 
+            from virne.reliability.features import feature_signature
+            expected_signature = feature_signature(self.config)
+            stored_signature = checkpoint.get('reliability_feature_signature',
+                                              {'names': [], 'mode': None, 'version': 1})
+            if expected_signature != stored_signature:
+                raise ValueError('Incompatible reliability observation architecture: '
+                                 f'checkpoint={stored_signature}, configured={expected_signature}')
             self.policy.load_state_dict(policy_state, strict=True)
             if optimizer_state is not None:
                 self.optimizer.load_state_dict(optimizer_state)

@@ -248,6 +248,10 @@ class Recorder:
         else:
             raise NotImplementedError
             
+        if self.config.get('reliability', {}).get('enabled', False):
+            from virne.reliability.service import ReliabilityService
+            ReliabilityService(self.config).annotate(p_net, v_net, solution)
+            solution_info = solution.to_dict()
         self.count_state(v_net, p_net, solution)
         record = {**self.state, **solution_info}
         return record

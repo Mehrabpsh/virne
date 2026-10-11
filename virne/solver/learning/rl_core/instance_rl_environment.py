@@ -57,6 +57,8 @@ class InstanceRLEnv(RLBaseEnv):
         TopologicalMetricCalculator.add_to_cache('v_net', v_net_topological_metrics)
         feature_constructor_cls = FeatureConstructorRegistry.get(self.config.rl.feature_constructor.name)
         self.feature_constructor = feature_constructor_cls(self.p_net, self.v_net, self.config)
+        # Register optional thesis strategies without modifying original calculators.
+        from virne.solver.learning.rl_core import thesis_reward
         # reward calculator
         reward_calculator_cls = RewardCalculatorRegistry.get(self.config.rl.reward_calculator.name)
         self.reward_calculator = reward_calculator_cls(self.config)

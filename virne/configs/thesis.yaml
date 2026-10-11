@@ -1,0 +1,59 @@
+# Infrastructure defaults only; final scientific choices are deliberately unset.
+reliability:
+  enabled: false
+  mode: node_only
+  backend: analytic
+  config_id: null
+  nodes:
+    lambda_f: null
+    mu_r: null
+  links:
+    lambda_f: null
+    mu_r: null
+sla:
+  enabled: false
+  levels: [0.99, 0.999, 0.9995, 0.9999]
+  assignment: discrete
+  probabilities: null
+  values: null
+joint_objective:
+  name: null
+  alpha: null
+  beta: null
+reliability_features:
+  enabled: false
+  names: []
+ra_heuristic:
+  normalization: null
+  combine: null
+  alpha: null
+ra_evne:
+  cpu_attribute: null
+  bandwidth_attribute: null
+  empty_distance: null
+  weibull_scale: null
+  weibull_shape: null
+  ages: null
+  failure_counts: null
+  last_failure_positions: null
+cand_rl:
+  profile: thesis_joint
+  k: null
+  distance_weight: null
+  source: null
+  destination: null
+  resource_names: null
+  capacity_attributes: null
+  hidden_dims: null
+  mask_padding: null
+  redundancy: null
+potential:
+  definition: null
+  terminal_convention: null
+paper9_reward:
+  rho: null
+  sigma: null
+  nu: null
+  varsigma: null
+  c: null
+  acceptance_gate: null

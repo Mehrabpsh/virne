@@ -289,7 +289,8 @@ def get_p_net_x_dim(config: Any) -> int:
     p_net_x_dim += num_p_link_attrs * 4 if if_use_aggregated_link_attrs else 0
     p_net_x_dim += 1 if if_use_degree_metric else 0
     p_net_x_dim += 3 if if_use_more_topological_metrics else 0
-    return p_net_x_dim
+    from virne.reliability.features import feature_dimensions
+    return p_net_x_dim + feature_dimensions(config)[0]
 
 def get_p_net_edge_dim(config: Any) -> int:
     """
@@ -297,7 +298,8 @@ def get_p_net_edge_dim(config: Any) -> int:
     """
     num_p_link_attrs = config.rl.feature_constructor.num_extracted_p_link_attrs
     p_net_edge_dim = num_p_link_attrs
-    return p_net_edge_dim
+    from virne.reliability.features import feature_dimensions
+    return p_net_edge_dim + feature_dimensions(config)[2]
 
 def get_v_node_x_dim(config: Any) -> int:
     """
@@ -335,7 +337,8 @@ def get_v_net_x_dim(config: Any) -> int:
     v_node_x_dim += num_v_link_attrs * 4 if if_use_aggregated_link_attrs else 0
     v_node_x_dim += 1 if if_use_degree_metric else 0
     v_node_x_dim += 3 if if_use_more_topological_metrics else 0
-    return v_node_x_dim
+    from virne.reliability.features import feature_dimensions
+    return v_node_x_dim + feature_dimensions(config)[1]
 
 def get_v_net_edge_dim(config: Any) -> int:
     """

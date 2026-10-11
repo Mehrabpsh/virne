@@ -87,6 +87,7 @@ class VirtualNetworkRequestSimulator(object):
         self.v_nets = list(v_nets) if v_nets is not None else []
         self.events = list(events) if events is not None else []
         self.v_sim_setting = copy.deepcopy(v_sim_setting) if v_sim_setting is not None else {}
+        self.sla_seed = kwargs.get('seed')
         self._construct_v2event_dict()
 
     @property
@@ -146,6 +147,8 @@ class VirtualNetworkRequestSimulator(object):
         """
         if seed is not None: 
             set_seed(seed)
+        if seed is not None:
+            self.sla_seed = seed
         if v_nets == True:
             self._renew_v_nets()
         if events == True:
@@ -175,6 +178,10 @@ class VirtualNetworkRequestSimulator(object):
             v_net.generate_attrs_data()
             return v_net
         self.v_nets = list(map(create_v_net, list(range(self.v_sim_setting['num_v_nets']))))
+        sla = self.v_sim_setting.get('sla') or {}
+        if sla.get('enabled', False):
+            from virne.reliability.model import DiscreteRequestSLAModel
+            DiscreteRequestSLAModel(sla).assign(self.v_nets, seed=self.sla_seed)
         return self.v_nets
 
     def _renew_events(self):

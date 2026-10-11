@@ -32,6 +32,16 @@ def add_simulation_into_config(config: DictConfig):
     with open_dict(config):
         if "simulation" not in config:
             config.simulation = OmegaConf.create()
+        # Copy optional provider configuration into dataset generation settings.
+        # Disabled extensions do not change settings, RNG draws or feature counts.
+        if config.get('reliability', {}).get('enabled', False):
+            config.p_net_setting.reliability = config.reliability
+        elif 'reliability' in config:
+            config.p_net_setting.pop('reliability', None)
+        if config.get('sla', {}).get('enabled', False):
+            config.v_sim_setting.sla = config.sla
+        elif 'sla' in config:
+            config.v_sim_setting.pop('sla', None)
         # Update simulation settings
         config.simulation.p_net_dataset_dir = get_p_net_dataset_dir_from_setting(config.p_net_setting, config.experiment.seed)
         config.simulation.v_nets_dataset_dir = get_v_nets_dataset_dir_from_setting(config.v_sim_setting, config.experiment.seed)

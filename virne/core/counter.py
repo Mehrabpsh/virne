@@ -380,6 +380,9 @@ class Counter(object):
             summary_info['avg_reward'] = records.loc[records['event_type']==1, 'v_net_reward'].mean()
         else:
             summary_info['avg_reward'] = 0
+        if 'availability_requirement' in records.columns:
+            from virne.reliability.metrics import summarize_reliability
+            summary_info.update(summarize_reliability(records))
         return summary_info
 
     @classmethod

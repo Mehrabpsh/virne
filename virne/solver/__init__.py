@@ -21,3 +21,6 @@ __all__ = [
     'Solver',
     'SolverRegistry',
 ]
+# Additional registrations preserve every original solver key.
+from virne.solver.heuristic import reliability_rank
+from virne.solver.learning.reinforcement_learning import cand_rl_solver

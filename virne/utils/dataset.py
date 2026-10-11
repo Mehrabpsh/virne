@@ -4,6 +4,8 @@
 
 
 import os
+import hashlib
+import json
 import random
 import warnings
 import numpy as np
@@ -143,6 +145,16 @@ def generate_file_name(config, epoch_id=0, extra_items=[], **kwargs):
     file_name = file_name_1 + file_name_3 + '.csv'
     return file_name
 
+def _provider_identity(setting, key):
+    provider = setting.get(key) or {}
+    if not provider.get('enabled', False):
+        return ''
+    if isinstance(provider, DictConfig):
+        provider = OmegaConf.to_container(provider, resolve=True)
+    identity = hashlib.sha256(json.dumps(provider, sort_keys=True).encode()).hexdigest()[:16]
+    return f'-{key}_{identity}'
+
+
 def get_p_net_dataset_dir_from_setting(p_net_setting, seed: Optional[int] = None):
     """Get the directory of the dataset of physical networks from the setting of the physical network simulation."""
     p_net_dataset_dir = p_net_setting['output']['save_dir']
@@ -157,6 +169,7 @@ def get_p_net_dataset_dir_from_setting(p_net_setting, seed: Optional[int] = None
     p_net_dataset_middir = p_net_name + '-' + node_attrs_str + '-' + link_attrs_str
     if seed is not None:
         p_net_dataset_middir += f'-seed_{seed}'
+    p_net_dataset_middir += _provider_identity(p_net_setting, 'reliability')
     p_net_dataset_dir = os.path.join(p_net_dataset_dir, p_net_dataset_middir)
     return p_net_dataset_dir
 
@@ -200,6 +213,7 @@ def get_v_nets_dataset_dir_from_setting(
                         node_attrs_str + '-' + link_attrs_str
     if seed is not None:
         v_nets_dataset_middir += f'-seed_{seed}'
+    v_nets_dataset_middir += _provider_identity(v_sim_setting, 'sla')
     v_nets_dataset_dir = os.path.join(v_nets_dataset_dir, v_nets_dataset_middir)
     return v_nets_dataset_dir
 

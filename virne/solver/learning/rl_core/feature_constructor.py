@@ -323,7 +323,8 @@ class PNetVNetFeatureConstructor(BaseFeatureConstructor):
             'v_net_edge_index': v_net_obs['edge_index'],
             'v_net_edge_attr': v_net_obs['edge_attr'],
         }
-        return combined_obs
+        from virne.reliability.features import ReliabilityFeatureProvider
+        return ReliabilityFeatureProvider(self.config).extend(combined_obs, p_net, v_net, solution)
 
 
 def get_selected_p_net_nodes(solution):
