@@ -1,0 +1,41 @@
+"""Reuse the verified Bash launcher; override every composed value explicitly."""
+import json
+import os
+from pathlib import Path
+import sys
+from scripts.thesis.experiments.common import command, override, write_yaml
+from .planner import final_config
+
+
+def flatten(data,prefix=''):
+    for key,value in data.items():
+        path=prefix+'.'+key if prefix else key
+        if isinstance(value,dict) and value:
+            yield from flatten(value,path)
+        else:
+            yield path,value
+
+
+def hydra_value(value):
+    if isinstance(value,dict):return "{"+",".join(str(k)+":"+hydra_value(v) for k,v in value.items())+"}"
+    if isinstance(value,list):return "["+",".join(hydra_value(v) for v in value)+"]"
+    return json.dumps(value,allow_nan=False)
+
+
+def launch(bundle,resolved,job,device):
+    method=resolved['selected_methods'][job['method']]
+    config=final_config(resolved,job,bundle,device)
+    directory=Path(bundle)/job['relative_directory']
+    env={'PYTHON':sys.executable,'SOLVER':job['solver'],'RUN_ID':job['run_id'],
+         'OUTPUT_ROOT':config['experiment']['save_root_dir'],'PROFILE':'configured',
+         'SEED':str(job['seed']),'EPOCHS':str(config['training']['num_train_epochs']),
+         'OFFLINE':str(job['phase']=='train').lower(),'MODEL_PATH':config['solver']['pretrained_model_path']}
+    excluded={'experiment.run_id','experiment.save_root_dir'}
+    arguments=[k+'='+hydra_value(v) for k,v in flatten(config) if k not in excluded]
+    print('  '+job['run_id'],flush=True)
+    command(bundle,job['run_id'],['bash','scripts/thesis/run.sh',*arguments],env)
+    model=config['solver']['pretrained_model_path'] or (str(directory/'models/model.pkl') if job['phase']=='train' else '')
+    result={**job,'category':method['capabilities']['kind'],'label':method['label'],'model_path':model,
+            'run_directory':str(directory.resolve()),'completed':True}
+    if job['phase']=='train' and not Path(model).is_file():raise FileNotFoundError(f'Training checkpoint missing: {model}')
+    return result

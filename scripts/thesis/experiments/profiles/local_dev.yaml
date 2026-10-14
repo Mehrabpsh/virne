@@ -1,0 +1,54 @@
+name: LOCAL_DEV
+purpose: preliminary pipeline validation; all numeric settings provisional
+use_cuda: false
+run_tests: false
+threads: 1
+calibration:
+  reference_beta: 1.0  # Calibration heuristics only; overwritten by calibrated beta for experiments.
+  seeds: [11, 17, 23]
+  requests: 24
+  arrival_rates: [0.02, 0.2]
+  failure_rates: [0.000005, 0.00005]
+  acceptance_range: [0.15, 0.9]
+  satisfaction_range: [0.1, 0.9]
+  minimum_peak_utilization: 0.2
+  beta_target_compliance: 0.5
+train_seeds: [31]
+test_seeds: [101, 103]
+epochs: 1
+requests: 16
+pn_nodes: 12
+vn_size: [2, 3]
+lifetime_scale: 200
+mu_r: 0.1
+link_failure_multiplier: 0.5
+objective: multiplicative
+reward: joint_terminal
+features: [raw_availability, sla_requirement, sla_margin, partial_availability, log_risk, remaining_budget]
+resource_overrides:
+  v_sim_setting.node_attrs_setting.0.low: 10
+  v_sim_setting.node_attrs_setting.0.high: 30
+  v_sim_setting.link_attrs_setting.0.low: 10
+  v_sim_setting.link_attrs_setting.0.high: 40
+learning_overrides:
+  training.batch_size: 4
+  rl.target_steps: 4
+  rl.repeat_times: 1
+  nn.embedding_dim: 16
+  nn.num_gnn_layers: 1
+comparators:
+  ra_nrm: {ra_heuristic.combine: product, ra_heuristic.normalization: max}
+  ra_grc: {ra_heuristic.combine: weighted_sum, ra_heuristic.normalization: max, ra_heuristic.alpha: 0.5}
+  evne: {ra_evne.cpu_attribute: cpu, ra_evne.bandwidth_attribute: bw, ra_evne.empty_distance: 1}
+  evne_original: {ra_evne.weibull_scale: 250000, ra_evne.weibull_shape: 1.5, history_value: 0}
+  cand_rl:
+    cand_rl.profile: thesis_joint
+    cand_rl.k: 3
+    cand_rl.distance_weight: hops
+    cand_rl.source: 0
+    cand_rl.destination: 1
+    cand_rl.resource_names: [cpu]
+    cand_rl.capacity_attributes: [max_cpu]
+    cand_rl.hidden_dims: [16, 16]
+    cand_rl.mask_padding: true
+    cand_rl.redundancy: none

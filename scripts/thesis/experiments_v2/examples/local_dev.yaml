@@ -1,0 +1,145 @@
+experiment:
+  name: local_dev_v2
+  description: Preliminary CPU pipeline validation; scientific settings are not frozen.
+runtime:
+  device: cpu
+  threads: 1
+  results_root: results/thesis_experiments_v2
+environment:
+  substrate:
+    topology: {type: waxman, num_nodes: 12, wm_alpha: 0.5, wm_beta: 0.2}
+  workload:
+    num_requests: 16
+    topology: {type: random, random_prob: 0.5}
+    vnr_size: {distribution: uniform, dtype: int, low: 2, high: 3}
+    arrival_rate: 0.02
+    lifetime: {distribution: exponential, dtype: float, scale: 200}
+  resources:
+    physical_node: {cpu: {low: 50, high: 100}}
+    physical_link: {bw: {low: 50, high: 100}}
+    virtual_node: {cpu: {low: 10, high: 30}}
+    virtual_link: {bw: {low: 10, high: 40}}
+  reliability:
+    backend: analytic
+    mode: node_and_link
+    config_id: PIPELINE_V2_PROVISIONAL
+    nodes: {lambda_f: 0.00005, mu_r: 0.1}
+    links: {lambda_f: 0.000025, mu_r: 0.1}
+  sla:
+    levels: [0.99, 0.999, 0.9995, 0.9999]
+    probabilities: [0.25, 0.25, 0.25, 0.25]
+    assignment: discrete
+    values: null
+calibration:
+  methods: [nrm, grc]
+  seeds: [11, 17, 23]
+  requests: 24
+  search_space:
+    environment.workload.arrival_rate: [0.02, 0.2]
+    environment.reliability.nodes.lambda_f: [0.000005, 0.00005]
+  criteria:
+    acceptance_rate: {min: 0.15, max: 0.9}
+    sla_satisfaction_rate: {min: 0.1, max: 0.9}
+    minimum_peak_utilization: 0.2
+    require_all_sla_classes: true
+    require_monotonic_sla_difficulty: true
+    monotonic_tolerance: 0.0
+  beta_suggestion: {enabled: true, target_compliance: 0.5}
+  adopt_beta_for: []
+protocol:
+  training: {seeds: [31], epochs: 1}
+  evaluation: {seeds: [101, 103], online: true}
+learning_defaults:
+  batch_size: 4
+  target_steps: 4
+  repeat_times: 1
+  network: {embedding_dim: 16, num_gnn_layers: 1}
+  learning_rate: {actor: 0.001, critic: 0.001}
+methods:
+  original_ppo:
+    enabled: true
+    label: PPO-DualGAT
+    solver: ppo_dual_gat+
+    kind: auto
+    awareness: {reliability: false, sla: false}
+    objective: {name: original}
+    reward: {name: fixed_intermediate}
+  reliability_ppo:
+    enabled: true
+    label: Reliability-aware PPO-DualGAT
+    solver: ppo_dual_gat+
+    kind: auto
+    awareness: &aware {reliability: true, sla: true}
+    objective: &joint {name: multiplicative, beta: 0.23142476412881738}
+    reward: &reward {name: joint_terminal}
+    reliability_features: [raw_availability, sla_requirement, sla_margin, partial_availability, log_risk, remaining_budget]
+  cand_rl:
+    enabled: true
+    label: Cand-RL
+    solver: cand_rl
+    kind: auto
+    awareness: *aware
+    objective: *joint
+    reward: *reward
+    profile: thesis_joint
+    candidate: {k: 3, distance_weight: hops, resource_names: [cpu], capacity_attributes: [max_cpu], mask_padding: true}
+    endpoints: {source: 0, destination: 1}
+    network: {hidden_dims: [16, 16]}
+    redundancy: none
+  ffd: {enabled: true, label: FFD, solver: ffd_rank, kind: auto}
+  nrm: {enabled: true, label: NRM, solver: nrm_rank, kind: auto}
+  grc: {enabled: true, label: GRC, solver: grc_rank, kind: auto}
+  rw: {enabled: true, label: RW, solver: rw_rank, kind: auto}
+  ra_nrm:
+    enabled: true
+    label: RA-NRM
+    solver: ra_nrm
+    kind: auto
+    awareness: *aware
+    objective: *joint
+    reward: *reward
+    ra_heuristic: {normalization: max, combine: product}
+  ra_grc:
+    enabled: true
+    label: RA-GRC
+    solver: ra_grc
+    kind: auto
+    awareness: *aware
+    objective: *joint
+    reward: *reward
+    ra_heuristic: {normalization: max, combine: weighted_sum, alpha: 0.5}
+  ra_evne_a:
+    enabled: true
+    label: RA-EVNE-A
+    solver: ra_evne_a
+    kind: auto
+    awareness: *aware
+    objective: *joint
+    reward: *reward
+    ra_evne: {cpu_attribute: cpu, bandwidth_attribute: bw, empty_distance: 1}
+  ra_evne_original:
+    enabled: true
+    label: RA-EVNE-original
+    solver: ra_evne_original
+    kind: auto
+    awareness: *aware
+    objective: *joint
+    reward: *reward
+    ra_evne: {cpu_attribute: cpu, bandwidth_attribute: bw, empty_distance: 1, weibull_scale: 250000, weibull_shape: 1.5}
+    history: {initialization: zero}
+metrics:
+  - acceptance_rate
+  - avg_r2c_ratio
+  - long_term_r2c_ratio
+  - long_term_time_r2c_ratio
+  - sla_satisfaction_rate
+  - sla_service_rate_all_arrivals
+  - mean_delivered_availability
+  - mean_sla_shortfall
+  - median_sla_shortfall
+  - max_inservice_count
+reporting:
+  plots: true
+  formats: [png, pdf]
+  generate_markdown_report: true
+  assessment_beta: 1.0
