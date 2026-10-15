@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import sys
 from scripts.thesis.experiments.common import command, override, write_yaml
-from .planner import final_config
+from .planner import final_config, system_mode
 
 
 def flatten(data,prefix=''):
@@ -29,13 +29,20 @@ def launch(bundle,resolved,job,device):
     env={'PYTHON':sys.executable,'SOLVER':job['solver'],'RUN_ID':job['run_id'],
          'OUTPUT_ROOT':config['experiment']['save_root_dir'],'PROFILE':'configured',
          'SEED':str(job['seed']),'EPOCHS':str(config['training']['num_train_epochs']),
-         'OFFLINE':str(job['phase']=='train').lower(),'MODEL_PATH':config['solver']['pretrained_model_path']}
+         'OFFLINE':str(config['system']['if_offline_system']).lower(),'MODEL_PATH':config['solver']['pretrained_model_path']}
     excluded={'experiment.run_id','experiment.save_root_dir'}
     arguments=[k+'='+hydra_value(v) for k,v in flatten(config) if k not in excluded]
     print('  '+job['run_id'],flush=True)
     command(bundle,job['run_id'],['bash','scripts/thesis/run.sh',*arguments],env)
+    # Fail at the first mismatched job, as well as in bundle validation.
+    from omegaconf import OmegaConf
+    from ..analysis.validate import mode_errors
+    audit=json.loads((directory/'runtime_system.json').read_text())
+    errors=mode_errors(resolved,job,OmegaConf.load(directory/'config.yaml'),audit)
+    if errors:raise ValueError('; '.join(errors))
     model=config['solver']['pretrained_model_path'] or (str(directory/'models/model.pkl') if job['phase']=='train' else '')
     result={**job,'category':method['capabilities']['kind'],'label':method['label'],'model_path':model,
-            'run_directory':str(directory.resolve()),'completed':True}
+            'run_directory':str(directory.resolve()),'completed':True,
+            'system':system_mode(resolved,job['phase']),'tensorboard_directory':config['logger']['tensorboard_dir']}
     if job['phase']=='train' and not Path(model).is_file():raise FileNotFoundError(f'Training checkpoint missing: {model}')
     return result

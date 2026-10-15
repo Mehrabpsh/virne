@@ -16,6 +16,15 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
     try:data=yaml.safe_load(original)
     except yaml.YAMLError as exc:raise ConfigError(f'Invalid experiment YAML: {path}: {exc}') from exc
     data=dealias(document if document is not None else data)
+    # Materialize compatible defaults before dotted overrides are applied.
+    protocol=data.get('protocol',{}) if isinstance(data,dict) else {}
+    training=protocol.get('training',{}) if isinstance(protocol,dict) else {}
+    if isinstance(training,dict):training.setdefault('online',False)
+    runtime=data.get('runtime',{}) if isinstance(data,dict) else {}
+    if isinstance(runtime,dict):runtime.setdefault('tensorboard',{})
+    if isinstance(runtime,dict) and isinstance(runtime['tensorboard'],dict):
+        for key,value in {'enabled':False,'flush_secs':10,'request_interval':1}.items():
+            runtime['tensorboard'].setdefault(key,value)
     overrides=parse_assignments(sets);raw=parse_assignments(virne_sets)
     for key,value in overrides:set_path(data,key,value)
     validate(data)
@@ -56,6 +65,8 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
         config['system'].update(if_changeable_v_nets=False,if_time_window=False,renew_v_net_simulator=False)
         config['recorder'].update(if_save_records=True,if_temp_save_records=True)
         config['logger'].update(backends=['console','file'],level='INFO' if cap['kind']=='learned' else 'WARNING')
+        if data['runtime']['tensorboard']['enabled']:
+            config['logger']['backends'].append('tensorboard')
         validate_virne(config)
         methods[name]={'label':spec.get('label',name),'solver':spec['solver'],'capabilities':cap,'virne_config':config}
         if cap['warning']:warnings.append(f'{name}: {cap["warning"]}')

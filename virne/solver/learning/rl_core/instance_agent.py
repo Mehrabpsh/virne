@@ -218,6 +218,13 @@ class InstanceAgent(object):
                         loss = self.update()
 
                 instance, reward, done, info = env.step(solution)
+                # Observation only: returns/GAE and update boundaries above are unchanged.
+                request_step=epoch_id*env.v_net_simulator.num_v_nets+info.get('v_net_count',0)
+                self.logger.log_request(info,'train',request_step)
+                if 'tensorboard' in self.logger.loggers and request_step % self.config.logger.get('tensorboard_request_interval',1)==0:
+                    self.logger.log_scalars({'train/episode_return':sum(instance_buffer.rewards),
+                        'train/episode_length':instance_buffer.size(),
+                        'ppo/learning_rate':self.optimizer.param_groups[0]['lr']},request_step)
 
                 if done:
                     break

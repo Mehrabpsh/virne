@@ -6,6 +6,7 @@ if __package__ in (None,''):sys.path.insert(0,str(Path(__file__).resolve().paren
 import argparse
 import json
 import time
+import datetime
 import pandas as pd
 import yaml
 from scripts.thesis.experiments.common import command, write_json, write_yaml
@@ -28,7 +29,7 @@ def parser():
 
 def execute(resolved,original,plan,output=None,run_tests=False):
     # Import plotting only after preparing a writable matplotlib cache.
-    bundle=new_bundle(resolved,output);install_signals();manifest=[];start=time.monotonic()
+    bundle=new_bundle(resolved,output);install_signals();manifest=[];start=time.monotonic();active_job=None
     def checkpoint():
         write_json(bundle/'manifest.json',manifest)
         write_json(bundle/'pipeline_manifest.json',manifest)  # compatibility for shared telemetry renderer
@@ -43,10 +44,13 @@ def execute(resolved,original,plan,output=None,run_tests=False):
         for job in plan['jobs']:write_yaml(planned_configs/(job['run_id']+'.yaml'),final_config(resolved,job,bundle,plan['hardware']['selected_device']))
         for phase in ('train','eval'):
             def run_phase():
+                nonlocal active_job
                 for job in plan['jobs']:
                     if job['phase']!=phase:continue
+                    active_job=job['run_id']
                     manifest.append(launch(bundle,resolved,job,plan['hardware']['selected_device']));checkpoint()
-            stage(bundle,'training' if phase=='train' else 'online_evaluation',run_phase)
+                    active_job=None
+            stage(bundle,'training' if phase=='train' else 'evaluation',run_phase)
         from scripts.thesis.experiments_v2.analysis import collect, aggregate, validate, plot, report
         rows=stage(bundle,'collection',lambda:collect.collect(bundle,resolved,manifest))
         stage(bundle,'aggregation',lambda:aggregate.run(bundle,resolved,rows))
@@ -54,7 +58,7 @@ def execute(resolved,original,plan,output=None,run_tests=False):
         if resolved['experiment']['reporting']['plots']:stage(bundle,'plots',lambda:plot.run(bundle,resolved))
         stage(bundle,'report',lambda:report.run(bundle,resolved,plan,manifest,validation))
         reporting=resolved['experiment']['reporting']
-        required=['reports/experiment_report.json','reports/validation_report.json','aggregated/results_long.csv',
+        required=['reports/experiment_report.html','reports/experiment_report.json','reports/validation_report.json','aggregated/results_long.csv',
                   'aggregated/results_by_train_seed.csv','aggregated/results_summary.csv','aggregated/results_summary.json']
         if reporting['generate_markdown_report']:required.append('reports/experiment_report.md')
         if reporting['plots']:
@@ -62,12 +66,17 @@ def execute(resolved,original,plan,output=None,run_tests=False):
                 required.extend(f'plots/{metric}.{fmt}' for fmt in reporting['formats'])
         for file in required:
             if not (bundle/file).is_file():raise FileNotFoundError(bundle/file)
-        write_json(bundle/'completion.json',{'passed':True,'jobs':len(manifest),'runtime_seconds':time.monotonic()-start,'calibration_executed':False})
+        write_json(bundle/'completion.json',{'passed':True,'jobs':len(manifest),'runtime_seconds':time.monotonic()-start,
+                   'end_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'calibration_executed':False})
+        report.render_html(bundle,resolved,plan,manifest,validation)
         (bundle/'COMPLETE.txt').write_text(f'All required structural stages succeeded. Jobs: {len(manifest)}. Runtime: {time.monotonic()-start:.3f}s.\nPreliminary pipeline validation; scientific parameters remain unfrozen.\n')
         print(f'COMPLETE: {bundle}',flush=True)
         return bundle
     except BaseException as exc:
-        checkpoint();write_json(bundle/'FAILED.json',{'error':str(exc),'runtime_seconds':time.monotonic()-start})
+        checkpoint();write_json(bundle/'FAILED.json',{'error':str(exc),'failed_run_id':active_job,'runtime_seconds':time.monotonic()-start})
+        # Preserve a useful status report even if collection/validation was interrupted.
+        from scripts.thesis.experiments_v2.analysis.report import render_html
+        render_html(bundle,resolved,plan,manifest)
         raise
 
 

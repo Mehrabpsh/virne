@@ -67,6 +67,10 @@ recorder:
   summary_file_name: summary.csv
 
 logger:
+  tensorboard_dir: null  # default retains the native run-local logs directory
+  tensorboard_flush_secs: 10
+  tensorboard_request_interval: 1
+  runtime_audit_path: null  # opt-in experiment runtime provenance
   # actual log dir: <save_root_dir>/<solver_name>/<generated_run_id>/<log_dir>
   log_dir_name: logs
   project_name: 'virne'

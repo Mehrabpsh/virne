@@ -6,7 +6,7 @@ import pandas as pd
 from omegaconf import OmegaConf
 from scripts.thesis.experiments.common import METRICS, write_json
 from scripts.thesis.experiments.shared_checks import evaluation_errors, metric_errors
-from ..execution.planner import final_config, jobs
+from ..execution.planner import final_config, jobs, system_mode, tensorboard_path
 from .aggregate import tables, paired_differences
 
 
@@ -18,6 +18,20 @@ def same_frame(actual,expected,name):
 
 def fairness_errors(frame):
     return [f'Exogenous input fingerprint mismatch for evaluation seed {seed}' for seed,g in frame.groupby('eval_seed') if g.input_hash.nunique()!=1]
+
+
+def mode_errors(resolved,job,config,audit):
+    expected=system_mode(resolved,job['phase'])
+    errors=[]
+    if bool(config.system.if_offline_system)!=(expected=='OfflineSystem') or config.system.if_changeable_v_nets or config.system.if_time_window:
+        errors.append(f'{job["run_id"]}: requested {expected} differs from final config')
+    if audit.get('system')!=expected:
+        errors.append(f'{job["run_id"]}: requested {expected}, actual runtime {audit.get("system")}')
+    if job['phase']=='train' and not audit.get('training_completed'):
+        errors.append(f'{job["run_id"]}: runtime did not complete solver.learn')
+    if job['phase']=='eval' and (audit.get('training_requested') or audit.get('optimizer_updates',0)):
+        errors.append(f'{job["run_id"]}: runtime trained during evaluation')
+    return errors
 
 
 def run(bundle,resolved,manifest):
@@ -40,6 +54,13 @@ def run(bundle,resolved,manifest):
             for file in ('config.yaml','hydra_config.yaml','command.sh','stdout.log','runtime_seconds.txt','source_commit.txt'):
                 check((directory/file).is_file(),f'{r["run_id"]}: missing {file}')
             config=OmegaConf.load(directory/'config.yaml')
+            audit_path=directory/'runtime_system.json'
+            check(audit_path.is_file(),f'{r["run_id"]}: missing runtime mode evidence')
+            if audit_path.is_file():errors.extend(mode_errors(resolved,r,config,json.loads(audit_path.read_text())))
+            if resolved['experiment']['runtime'].get('tensorboard',{}).get('enabled'):
+                tb=tensorboard_path(bundle,r)
+                check(config.logger.tensorboard_dir==str(tb),f'{r["run_id"]}: wrong TensorBoard route')
+                check(bool(list(tb.glob('events.out.tfevents.*'))),f'{r["run_id"]}: missing TensorBoard event files')
             check((directory/'source_commit.txt').read_text().strip()==commit,f'{r["run_id"]}: source mismatch')
             check(config.experiment.seed==r['seed'],f'{r["run_id"]}: seed mismatch')
             check(config.training.num_train_epochs==(resolved['experiment']['protocol']['training']['epochs'] if r['phase']=='train' else 0),f'{r["run_id"]}: epoch mismatch')

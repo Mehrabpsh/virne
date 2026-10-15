@@ -50,3 +50,16 @@ def run(bundle,resolved):
     ax.legend(fontsize=8,bbox_to_anchor=(1.01,1));ax.grid(alpha=.2);save(fig,'sla_class_breakdown')
     methods={name:(m['solver'],m['label'],m['capabilities']['kind']) for name,m in resolved['selected_methods'].items()}
     training_plots(bundle,methods,save)
+    # Visualization of the native writer's existing diagnostics only.
+    if exp['runtime'].get('tensorboard',{}).get('enabled'):
+        from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+        manifest=json.loads((bundle/'manifest.json').read_text())
+        for job in manifest:
+            if job['phase']!='train':continue
+            events=EventAccumulator(job['tensorboard_directory'],size_guidance={'scalars':0}).Reload()
+            if 'train/episode_return' not in events.Tags()['scalars']:continue
+            values=events.Scalars('train/episode_return')
+            fig,ax=plt.subplots(figsize=(7,4))
+            ax.plot([v.step for v in values],[v.value for v in values],marker='o',markersize=3)
+            ax.set(xlabel='SFC boundary',ylabel='Episode return',title='Recorded training return: '+job['label'])
+            save(fig,'training_return_'+job['run_id'])

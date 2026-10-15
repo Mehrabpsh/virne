@@ -10,6 +10,8 @@ import pprint
 import random
 import numpy as np
 import copy
+import json
+import hashlib
 from typing import Union, Dict, TYPE_CHECKING
 from omegaconf import OmegaConf, DictConfig, open_dict
 
@@ -121,6 +123,10 @@ class BaseSystem:
         pass
 
     def ready(self):
+        self.logger.runtime_phase='eval'
+        self._runtime_audit={'system':type(self).__name__,'training_requested':self.config.training.num_train_epochs>0,
+                             'training_completed':False,'optimizer_updates':0}
+        self.save_runtime_audit()
         if not isinstance(self.solver, RLSolver):
             return
         # Load pretrained model
@@ -134,19 +140,42 @@ class BaseSystem:
         # Pretrain if required
         num_train_epochs = self.config.training.num_train_epochs
         if num_train_epochs > 0:
+            self.logger.runtime_phase='train'
+            def policy_digest():
+                digest=hashlib.sha256()
+                for name,value in self.solver.policy.state_dict().items():
+                    digest.update(name.encode());digest.update(value.detach().cpu().contiguous().numpy().tobytes())
+                return digest.hexdigest()
+            audit_enabled=bool(self.config.logger.get('runtime_audit_path'))
+            before=policy_digest() if audit_enabled else None
+            updates_before=self.solver.update_time
             self.logger.info(f'{"-" * 20} Pretrain {self.config.solver.solver_name} for {num_train_epochs} epochs {"-" * 20}\n')
             self.solver.learn(self.env, num_epochs=num_train_epochs)
+            self._runtime_audit.update(training_completed=True,optimizer_updates=self.solver.update_time-updates_before)
+            if audit_enabled:
+                self._runtime_audit.update(policy_sha256_before=before,policy_sha256_after=policy_digest())
+            self.save_runtime_audit()
             self.logger.info(f'{"-" * 20} Pretrain {self.config.solver.solver_name} done {"-" * 20}\n')
         # set eval mode
         self.solver.eval()
+        self.logger.runtime_phase='eval'
         
     def complete(self):
         if self.pbar is not None: self.pbar.close()
+        self.logger.flush()
+        self.save_runtime_audit()
+
+    def save_runtime_audit(self):
+        path=self.config.logger.get('runtime_audit_path')
+        if path:
+            os.makedirs(os.path.dirname(path),exist_ok=True)
+            with open(path,'w') as stream:json.dump(self._runtime_audit,stream,indent=2)
 
     def get_process_bar(self, epoch_id):
         self.pbar = tqdm.tqdm(desc=f'Running with {self.config.solver.solver_name} in epoch {epoch_id}', total=self.env.v_net_simulator.num_v_nets)
 
     def update_process_bar(self, info):
+        self.logger.log_request(info,'eval',info.get('v_net_count',0))
         if self.pbar is not None: 
             self.pbar.update(1)
             self.pbar.set_postfix({

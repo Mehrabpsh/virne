@@ -5,6 +5,7 @@ runtime:
   device: cpu
   threads: 1
   results_root: results/thesis_experiments_v2
+  tensorboard: {enabled: true, flush_secs: 10, request_interval: 1}
 environment:
   substrate:
     topology: {type: waxman, num_nodes: 12, wm_alpha: 0.5, wm_beta: 0.2}
@@ -47,7 +48,7 @@ calibration:
   beta_suggestion: {enabled: true, target_compliance: 0.5}
   adopt_beta_for: []
 protocol:
-  training: {seeds: [31], epochs: 1}
+  training: {seeds: [31], epochs: 1, online: true}
   evaluation: {seeds: [101, 103], online: true}
 learning_defaults:
   batch_size: 4

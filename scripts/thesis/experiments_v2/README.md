@@ -219,3 +219,89 @@ Use smaller request budgets for a complete CPU check while retaining all enabled
 `--set environment.workload.num_requests=4`. Scientific GPU budgets, workload/resource
 models, CTMC distributions, beta/objective/reward and comparator settings require explicit
 review/freezing before real experiments. CUDA is detected and gracefully falls back to CPU.
+
+## Online training and runtime verification
+
+`protocol.training.online: true` selects Virne `OnlineSystem`; `false` selects
+`OfflineSystem`. **If omitted, training defaults to false**, preserving older v2
+configs. Both examples now explicitly opt into online training. Evaluation requires
+an explicit `protocol.evaluation.online: true`. A false evaluation value fails
+preflight: the existing OfflineSystem resets and scales substrate capacity to 75%
+between requests while retaining its departure ledger, so it cannot cleanly
+satisfy this framework's resource accounting and common-environment contract.
+
+OnlineSystem calls `BaseSystem.ready()` → `solver.learn(env)` →
+`InstanceAgent.learn_singly()`. Each SFC uses its own InstanceEnv and buffer;
+returns/GAE are computed per SFC before buffers are merged. PPO may batch multiple
+SFCs. The outer SolutionStepEnvironment processes sequential arrivals, deployment,
+residual resources, lifetimes and departures. No episode, PPO, reward or SLA
+formula has changed. The existing OfflineSystem pretraining also receives this
+outer environment; its distinct reset/scaling behavior occurs in its simulation
+loop after `ready()`. Selecting online mode does not invent a new learning loop.
+
+Dry-run/execution summaries show `Training system` and `Evaluation system`.
+Every planned/final config freezes `system.if_offline_system`. Each job writes
+`runtime_system.json` with the **actual class**, training completion, optimizer
+update count, and policy hashes before/after learning. Validation compares the
+requested class, final config and actual runtime evidence. A tiny real PPO test
+checks changed parameters, optimizer state, a checkpoint and resource release.
+
+## One TensorBoard dashboard per bundle
+
+```yaml
+runtime:
+  tensorboard:
+    enabled: true       # omitted defaults to false
+    flush_secs: 10      # native writer flush interval
+    request_interval: 1 # sample every N SFC boundaries, never every action
+protocol:
+  training: {seeds: [31], epochs: 1, online: true}
+  evaluation: {seeds: [101, 103], online: true}
+```
+
+The existing Virne Logger owns the only SummaryWriter in each process. V2 routes
+it using `logger.tensorboard_dir`:
+
+```text
+<bundle>/tensorboard/<method>/<phase>/<solver>/<existing_run_id>/events.out.tfevents.*
+```
+
+The existing run ID includes method, phase, train seed (or none) and run/evaluation
+seed. All sequential jobs share `<bundle>/tensorboard`; completed runs stay there.
+No server starts automatically. From the same Python environment used to run Virne:
+
+```bash
+python -m tensorboard.main --logdir /absolute/path/to/bundle/tensorboard --host 127.0.0.1 --port 6006
+```
+
+Open `http://127.0.0.1:6006`. Later runs appear automatically. Reuse this command to
+reopen the bundle. Disable with `--set runtime.tensorboard.enabled=false`.
+Existing optimizer tags are retained, with `ppo/` aliases, per-SFC return/length,
+learning rate, economic metrics, active requests/utilization, native reliability
+fields and finalized evaluation summaries. Reliability diagnostics are available
+when the solver's native reliability/SLA recording is enabled; disabled baselines
+continue to receive common-world post-hoc assessment in the authoritative results
+pipeline. TensorBoard never replaces CSV/JSON or supplies aggregation inputs.
+
+## Standard final report and regeneration
+
+Normal execution automatically writes **`reports/experiment_report.html`**, plus
+`reports/experiment_report.json` and optional `reports/experiment_report.md` (the
+existing `generate_markdown_report` flag). HTML has ten standard sections covering
+identity/provenance, job status, configs, training, economics, reliability/SLA,
+system metrics, hierarchical statistics, validation and linked artifacts. It reads
+existing aggregate tables and validation results; it does not redefine metrics.
+Failures also leave an HTML status report with whatever artifacts are available.
+
+Regenerate from a frozen v2 bundle, including older completed bundles, without
+resolving configs again or executing any jobs (run from the repository root):
+
+```bash
+python -m scripts.thesis.experiments_v2.analysis.report --bundle /absolute/path/to/bundle
+```
+
+This refreshes report files only. Missing older runtime/TensorBoard artifacts are
+shown as unavailable. HTML is the portable primary output; use browser Print to
+PDF if needed. No PDF rendering dependency or automatic PDF export is introduced.
+Calibration remains a separate command and is never called by experiment runs or
+report regeneration.

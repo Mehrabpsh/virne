@@ -509,6 +509,7 @@ class BaseEnvironment:
         for k, v in extra_summary_info.items():
             run_info_dict[k] = v
         info = {**summary_info, **run_info_dict}
+        self.logger.log_summary(info)
 
         if self.config.recorder.if_save_records:
             record_path = self.recorder.save_records(record_file_name)

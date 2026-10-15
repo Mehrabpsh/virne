@@ -7,6 +7,7 @@ runtime:
   device: auto
   threads: 4
   results_root: results/thesis_experiments_v2
+  tensorboard: {enabled: true, flush_secs: 10, request_interval: 1}
 environment:
   substrate:
     topology:
@@ -102,6 +103,7 @@ calibration:
   adopt_beta_for: []
 protocol:
   training:
+    online: true
     seeds:
     - 31
     - 37

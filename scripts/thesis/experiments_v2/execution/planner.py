@@ -7,6 +7,16 @@ from pathlib import Path
 from scripts.thesis.experiments.common import ROOT
 
 
+def system_mode(resolved,phase):
+    protocol=resolved['experiment']['protocol']
+    online=protocol['training'].get('online',False) if phase=='train' else protocol['evaluation']['online']
+    return 'OnlineSystem' if online else 'OfflineSystem'
+
+
+def tensorboard_path(bundle,job):
+    return (Path(bundle)/'tensorboard'/job['method']/job['phase']/job['solver']/job['run_id']).resolve()
+
+
 def hardware(requested):
     import torch
     available=torch.cuda.is_available()
@@ -48,7 +58,9 @@ def summary(resolved,device=None):
     return {'experiment':exp['experiment'],'environment':resolved['resolved_environment'],
             'environment_config_hash':resolved['environment_config_hash'],
             'methods':{n:{'solver':m['solver'],'label':m['label'],**m['capabilities']} for n,m in resolved['selected_methods'].items()},
-            'protocol':exp['protocol'],'hardware':device,'calibrated_values':exp.get('calibration_result',{}).get('selected',{}),
+            'protocol':exp['protocol'],'Training system':system_mode(resolved,'train'),
+            'Evaluation system':system_mode(resolved,'eval'),'tensorboard':exp['runtime'].get('tensorboard',{'enabled':False}),
+            'hardware':device,'calibrated_values':exp.get('calibration_result',{}).get('selected',{}),
             'calibrated_overrides':resolved['calibrated_overrides'],'warnings':resolved['warnings']+([device['warning']] if device['warning'] else []),
             'job_counts':{'training':train,'learned_evaluation':learned_eval,'heuristic_evaluation':len(planned)-train-learned_eval,'total':len(planned)},
             'jobs':planned,'calibration_executed':False}
@@ -58,7 +70,12 @@ def final_config(resolved,job,bundle,selected_device):
     config=copy.deepcopy(resolved['selected_methods'][job['method']]['virne_config'])
     root=(Path(bundle)/job['relative_output_root']).resolve()
     config['experiment'].update(seed=job['seed'],run_id=job['run_id'],save_root_dir=str(root))
-    config['system']['if_offline_system']=job['phase']=='train'
+    config['system']['if_offline_system']=system_mode(resolved,job['phase'])=='OfflineSystem'
+    config['logger']['runtime_audit_path']=str((Path(bundle)/job['relative_directory']/'runtime_system.json').resolve())
+    tb=resolved['experiment']['runtime'].get('tensorboard',{})
+    config['logger']['tensorboard_dir']=str(tensorboard_path(bundle,job)) if tb.get('enabled',False) else None
+    config['logger']['tensorboard_flush_secs']=tb.get('flush_secs',10)
+    config['logger']['tensorboard_request_interval']=tb.get('request_interval',1)
     config['training']['num_train_epochs']=resolved['experiment']['protocol']['training']['epochs'] if job['phase']=='train' else 0
     config['training']['use_cuda']=selected_device=='cuda'
     config['training']['seed']=job['seed'] if job['phase']=='train' else None

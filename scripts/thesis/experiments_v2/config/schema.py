@@ -83,7 +83,15 @@ def validate(data):
         require(name in data, f'Missing required section: {name}')
     keys(data['experiment'],['name','description'],'experiment')
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',str(data['experiment'].get('name',''))) is not None,'Invalid experiment.name')
-    keys(data['runtime'],['device','threads','results_root'],'runtime')
+    keys(data['runtime'],['device','threads','results_root','tensorboard'],'runtime')
+    tb=data['runtime'].get('tensorboard',{'enabled':False,'flush_secs':10,'request_interval':1})
+    keys(tb,['enabled','flush_secs','request_interval'],'runtime.tensorboard')
+    require(isinstance(tb['enabled'],bool),'runtime.tensorboard.enabled must be boolean')
+    positive(tb['flush_secs'],'runtime.tensorboard.flush_secs',True)
+    positive(tb['request_interval'],'runtime.tensorboard.request_interval',True)
+    if tb['enabled']:
+        import importlib.util
+        require(importlib.util.find_spec('tensorboard') is not None,'TensorBoard enabled but tensorboard is not installed')
     require(data['runtime'].get('device') in ('auto','cpu','cuda'),'runtime.device must be auto/cpu/cuda')
     positive(data['runtime'].get('threads'),'runtime.threads',True)
     require(isinstance(data['runtime'].get('results_root'),str),'runtime.results_root is required')
@@ -91,13 +99,15 @@ def validate(data):
     for name in ('substrate','workload','resources','reliability','sla'):
         require(name in data['environment'],f'Missing environment.{name}')
     keys(data['protocol'],['training','evaluation'],'protocol')
-    keys(data['protocol']['training'],['seeds','epochs'],'protocol.training')
+    keys(data['protocol']['training'],['seeds','epochs','online'],'protocol.training')
     keys(data['protocol']['evaluation'],['seeds','online'],'protocol.evaluation')
     train=data['protocol']['training'];evaluation=data['protocol']['evaluation']
     seed_list(train['seeds'],'training');seed_list(evaluation['seeds'],'evaluation')
     require(set(train['seeds']).isdisjoint(evaluation['seeds']),'Training/evaluation seeds must be disjoint')
     positive(train['epochs'],'protocol.training.epochs',True)
-    require(evaluation.get('online') is True,'Only online evaluation is supported by this thesis framework')
+    require(isinstance(train.get('online',False),bool),'protocol.training.online must be boolean')
+    require(isinstance(evaluation.get('online'),bool),'protocol.evaluation.online must be boolean')
+    require(evaluation['online'], 'OfflineSystem evaluation is not supported cleanly: Virne resets and scales substrate resources by 0.75 between requests while retaining the arrival/departure ledger. Use protocol.evaluation.online=true.')
     keys(data['learning_defaults'],['batch_size','target_steps','repeat_times','network','learning_rate'],'learning_defaults')
     require(isinstance(data['methods'],dict) and bool(data['methods']),'methods must be a nonempty mapping')
     for name,method in data['methods'].items():
