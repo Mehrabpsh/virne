@@ -52,7 +52,10 @@ environment:
     mode: node_and_link
     config_id: PIPELINE_V2_PROVISIONAL
     nodes:
-      lambda_f: 5.0e-05
+      lambda_f: &node_classes
+        distribution: categorical
+        values: [0.00001, 0.00005, 0.0001, 0.0005]
+        probabilities: [0.25, 0.25, 0.25, 0.25]
       mu_r: 0.1
     links:
       lambda_f: 2.5e-05
@@ -64,10 +67,10 @@ environment:
     - 0.9995
     - 0.9999
     probabilities:
-    - 0.25
-    - 0.25
-    - 0.25
-    - 0.25
+    - 0.4
+    - 0.3
+    - 0.2
+    - 0.1
     assignment: discrete
     values: null
 calibration:
@@ -83,9 +86,15 @@ calibration:
     environment.workload.arrival_rate:
     - 0.02
     - 0.2
-    environment.reliability.nodes.lambda_f:
-    - 5.0e-06
-    - 5.0e-05
+  # Illustrative support only; this scenario cannot attain SLA 0.9999.
+  reliability_scenarios:
+    proposed_node_classes:
+      backend: analytic
+      mode: node_and_link
+      config_id: PIPELINE_V2_PROVISIONAL
+      nodes: {lambda_f: *node_classes, mu_r: 0.1}
+      links: {lambda_f: 0.000025, mu_r: 0.1}
+  require_qualified: true
   criteria:
     acceptance_rate:
       min: 0.15
@@ -97,6 +106,7 @@ calibration:
     require_all_sla_classes: true
     require_monotonic_sla_difficulty: true
     monotonic_tolerance: 0.0
+    require_no_proven_impossible: true
   beta_suggestion:
     enabled: true
     target_compliance: 0.5
@@ -106,16 +116,16 @@ protocol:
     online: true
     seeds:
     - 31
-    - 37
-    - 41
+      #- 37
+      #- 41
     epochs: 100
   evaluation:
     seeds:
     - 101
-    - 103
-    - 107
-    - 109
-    - 113
+      #- 103
+      #- 107
+      #- 109
+      #- 113
     online: true
 learning_defaults:
   batch_size: 128
@@ -152,7 +162,8 @@ methods:
       name: multiplicative
       beta: 0.23142476412881738
     reward: &id003
-      name: joint_terminal
+      name: joint_fixed
+      intermediate_reward: 0.1
     reliability_features:
     - raw_availability
     - sla_requirement
@@ -160,6 +171,8 @@ methods:
     - partial_availability
     - log_risk
     - remaining_budget
+    - normalized_log_risk
+    - remaining_budget_fraction
   cand_rl:
     enabled: true
     label: Cand-RL
@@ -168,6 +181,7 @@ methods:
     awareness: *id001
     objective: *id002
     reward: *id003
+    observation_features: [normalized_log_risk, remaining_budget_fraction]
     profile: thesis_joint
     candidate:
       k: 10
@@ -215,7 +229,8 @@ methods:
     reward: *id003
     ra_heuristic:
       normalization: max
-      combine: product
+      combine: normalized_risk_weighted_sum
+      alpha: 0.5  # provisional; sensitivity analysis required
   ra_grc:
     enabled: true
     label: RA-GRC
@@ -226,7 +241,7 @@ methods:
     reward: *id003
     ra_heuristic:
       normalization: max
-      combine: weighted_sum
+      combine: normalized_risk_weighted_sum
       alpha: 0.5
   ra_evne_a:
     enabled: true

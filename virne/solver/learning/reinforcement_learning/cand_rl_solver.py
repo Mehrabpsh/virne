@@ -16,6 +16,7 @@ from gymnasium import spaces
 
 from virne.reliability.evaluator import ReliabilityEvaluator
 from virne.reliability.model import DiscreteRequestSLAModel
+from virne.reliability.scaling import LogRiskScaler, remaining_budget_fraction
 from virne.solver.base_solver import SolverRegistry
 from virne.solver.learning.rl_core.instance_agent import InstanceAgent
 from virne.solver.learning.rl_core.instance_rl_environment import JointPRStepInstanceRLEnv
@@ -84,23 +85,37 @@ class CandRLObservationBuilder:
         if not self.resources or len(self.resources) != len(self.capacities):
             raise ValueError('Cand-RL requires matching explicit resource_names/capacity_attributes')
         self.evaluator = ReliabilityEvaluator(config.reliability.mode)
+        self.features = list(self.settings.get('observation_features', []))
+        if len(set(self.features)) != len(self.features) or set(self.features) - {'normalized_log_risk', 'remaining_budget_fraction'}:
+            raise ValueError('Cand observation_features must be unique normalized_log_risk / remaining_budget_fraction')
+        self.scaler = LogRiskScaler(config.reliability.nodes) if 'normalized_log_risk' in self.features else None
 
     @staticmethod
     def dimension(settings) -> int:
-        return settings.k*(len(settings.resource_names)+1)+len(settings.resource_names)+1
+        features = settings.get('observation_features', [])
+        return (settings.k*(len(settings.resource_names)+1+int('normalized_log_risk' in features))
+                +len(settings.resource_names)+1+int('remaining_budget_fraction' in features))
 
     def construct(self, env, candidates) -> np.ndarray:
-        rows = np.zeros((self.settings.k, len(self.resources)+1), dtype=np.float32)
+        rows = np.zeros((self.settings.k, len(self.resources)+1+int(self.scaler is not None)), dtype=np.float32)
         for index, node in enumerate(candidates):
             for col, (resource, capacity) in enumerate(zip(self.resources, self.capacities)):
                 initial = float(env.p_net.nodes[node][capacity])
                 if not math.isfinite(initial) or initial <= 0:
                     raise ValueError('Cand normalization requires positive finite component capacities')
                 rows[index, col] = env.p_net.nodes[node][resource]/initial
-            rows[index, -1] = self.evaluator.availability(env.p_net, {'node_slots': {0: node}})
+            availability = self.evaluator.availability(env.p_net, {'node_slots': {0: node}})
+            rows[index, len(self.resources)] = availability
+            if self.scaler is not None:
+                rows[index, len(self.resources)+1] = self.scaler.risk(availability)
         demand = [float(env.v_net.nodes[env.curr_v_node_id][resource]) for resource in self.resources]
+        required = DiscreteRequestSLAModel.requirement(env.v_net)
+        context = [required]
+        if 'remaining_budget_fraction' in self.features:
+            log_partial = self.evaluator.backend.log_availability(env.p_net, env.solution, self.evaluator.mode)
+            context.append(remaining_budget_fraction(required, log_partial))
         return np.concatenate((rows.reshape(-1), demand,
-                               [DiscreteRequestSLAModel.requirement(env.v_net)])).astype(np.float32)
+                               context)).astype(np.float32)
 
 
 class PlacementExecutor:
@@ -212,7 +227,12 @@ class CandRLSolver(InstanceAgent, PPOSolver):
 
     def get_additional_checkpoint_state(self):
         from omegaconf import OmegaConf
-        return {'cand_rl_signature': OmegaConf.to_container(self.config.cand_rl, resolve=True)}
+        signature = OmegaConf.to_container(self.config.cand_rl, resolve=True)
+        if not signature.get('observation_features'):
+            signature.pop('observation_features', None)  # legacy checkpoint compatibility
+        elif 'normalized_log_risk' in signature['observation_features']:
+            signature['node_risk_bounds'] = LogRiskScaler(self.config.reliability.nodes).signature()
+        return {'cand_rl_signature': signature}
 
     def load_additional_checkpoint_state(self, checkpoint):
         if checkpoint.get('cand_rl_signature') != self.get_additional_checkpoint_state()['cand_rl_signature']:

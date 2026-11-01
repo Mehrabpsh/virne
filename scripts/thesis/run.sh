@@ -65,7 +65,65 @@ printf '\n' >> "$run_dir/command.sh"
 git rev-parse HEAD > "$run_dir/source_commit.txt"
 printf 'Run: %s\nProfile: %s (small functional budget)\n' "$run_dir" "$PROFILE"
 "$PYTHON" main.py "${args[@]}" --cfg job --resolve > "$run_dir/hydra_config.yaml"
+#start_seconds=$SECONDS
+
+
+
+#==== added-start ======
+
+
+# start_seconds=$SECONDS
+
+# if [[ "${DEBUG_VIRNE:-0}" == "1" ]]; then
+#     echo "Starting Virne under debugpy..."
+#     "$PYTHON" -u -m debugpy \
+#         --listen 127.0.0.1:5678 \
+#         --wait-for-client \
+#         main.py "${args[@]}" 2>&1 | tee "$run_dir/stdout.log"
+# else
+#     "$PYTHON" -u main.py "${args[@]}" 2>&1 | tee "$run_dir/stdout.log"
+# fi
+
+# printf '%s\n' "$((SECONDS-start_seconds))" > "$run_dir/runtime_seconds.txt"
+
+
+
+
+
+
+
+
+
 start_seconds=$SECONDS
-"$PYTHON" -u main.py "${args[@]}" 2>&1 | tee "$run_dir/stdout.log"
+
+
+if [[ "${DEBUG_VIRNE:-0}" == "1" ]]; then
+    echo "Starting Virne under isolated debugpy..."
+
+    env \
+        -u DEBUGPY_RUNNING \
+        -u BUNDLED_DEBUGPY_PATH \
+        -u VSCODE_DEBUGPY_ADAPTER_ENDPOINTS \
+        -u PYDEVD_USE_FRAME_EVAL \
+        -u PYDEVD_DISABLE_FILE_VALIDATION \
+        "$PYTHON" -u -m debugpy \
+            --listen 127.0.0.1:5678 \
+            --wait-for-client \
+            main.py "${args[@]}" \
+            2>&1 | tee "$run_dir/stdout.log"
+else
+    "$PYTHON" -u main.py "${args[@]}" \
+        2>&1 | tee "$run_dir/stdout.log"
+fi
+
 printf '%s\n' "$((SECONDS-start_seconds))" > "$run_dir/runtime_seconds.txt"
+
+
+
+
+
+#==== added-end ======
+
+#"$PYTHON" -u main.py "${args[@]}" 2>&1 | tee "$run_dir/stdout.log"
+#printf '%s\n' "$((SECONDS-start_seconds))" > "$run_dir/runtime_seconds.txt"
 printf 'Run directory: %s\nModel (if trained): %s/models/model.pkl\n' "$run_dir" "$run_dir"

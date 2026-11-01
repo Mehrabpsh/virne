@@ -66,6 +66,7 @@ def run(bundle,resolved,manifest):
             check(config.training.num_train_epochs==(resolved['experiment']['protocol']['training']['epochs'] if r['phase']=='train' else 0),f'{r["run_id"]}: epoch mismatch')
             if r['category']=='learned':check(Path(r['model_path']).is_file(),f'{r["run_id"]}: checkpoint missing')
             if r['phase']=='eval':
+                check((directory/'runtime_inputs.json').is_file(),f'{r["run_id"]}: missing live runtime inputs')
                 check(not config.system.if_offline_system and not config.system.if_changeable_v_nets and not config.system.if_time_window,f'{r["run_id"]}: not OnlineSystem')
                 log=(directory/'stdout.log').read_text()
                 check('Start to learn singly' not in log and 'Pretrain '+r['solver']+' for ' not in log and 'Save model to ' not in log,f'{r["run_id"]}: training observed during evaluation')
@@ -76,6 +77,8 @@ def run(bundle,resolved,manifest):
         request_count=resolved['resolved_environment']['v_sim_setting']['num_v_nets']
         errors.extend(evaluation_errors(frame,request_count));errors.extend(metric_errors(frame,METRICS))
         errors.extend(fairness_errors(frame))
+        check('runtime_inputs_verified' in frame and frame.runtime_inputs_verified.astype(str).str.lower().eq('true').all(),
+              'Live runtime inputs were not verified for every evaluation')
         job_map={j['run_id']:j for j in expected}
         for _,row in frame.iterrows():
             j=job_map[row.run_id]

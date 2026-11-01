@@ -217,10 +217,12 @@ def test_launcher_serializes_resource_mappings_for_hydra():
     assert parsed.value()==value
 
 
-@pytest.mark.parametrize('adopt',[False,True])
-def test_calibration_export_native_yaml_and_beta_adoption_is_explicit(tmp_path,monkeypatch,adopt):
+@pytest.mark.parametrize('adopt,strict',[(False,False),(True,False),(False,True)])
+def test_calibration_export_native_yaml_and_beta_adoption_is_explicit(tmp_path,monkeypatch,adopt,strict):
     import scripts.thesis.experiments_v2.calibrate as module
     d=document();d['calibration']['search_space']={'environment.workload.arrival_rate':[.02]}
+    if strict:
+        d['calibration']['require_qualified']=True
     d['calibration']['seeds']=[11];d['calibration']['adopt_beta_for']=['reliability_ppo'] if adopt else []
     source=tmp_path/'source.yaml';source.write_text(yaml.safe_dump(d));original=source.read_bytes()
     bundle=tmp_path/'calibration_bundle';bundle.mkdir();(bundle/'logs').mkdir();(bundle/'reports').mkdir()
@@ -242,6 +244,16 @@ def test_calibration_export_native_yaml_and_beta_adoption_is_explicit(tmp_path,m
     monkeypatch.setattr(module,'launch',launch_stub);monkeypatch.setattr(module,'collect_row',collect_stub)
     monkeypatch.setattr(module,'evaluation_errors',lambda *a:[]);monkeypatch.setattr(module,'metric_errors',lambda *a:[])
     output=tmp_path/'new.calibrated.yaml'
+    if strict:
+        original_select=module.select
+        def reject(points,criteria):
+            chosen=original_select(points,criteria);chosen['qualifies']=False
+            return chosen
+        monkeypatch.setattr(module,'select',reject)
+        with pytest.raises(ConfigError,match='not exported'):module.execute(source,[],output)
+        assert not output.exists() and not (bundle/'COMPLETE.txt').exists()
+        assert (bundle/'FAILED.json').exists()
+        return
     module.execute(source,[],output)
     result=yaml.safe_load(output.read_text())
     assert source.read_bytes()==original and len(launched)==2

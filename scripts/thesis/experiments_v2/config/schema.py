@@ -113,7 +113,7 @@ def validate(data):
     for name,method in data['methods'].items():
         require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',name) is not None,f'Unsafe method name: {name}')
         keys(method,['enabled','label','solver','kind','awareness','objective','reward','reliability_features',
-                     'candidate','network','endpoints','profile','redundancy','ra_heuristic','ra_evne','history','overrides'],f'methods.{name}')
+                     'candidate','network','endpoints','profile','redundancy','observation_features','ra_heuristic','ra_evne','history','overrides'],f'methods.{name}')
         require(isinstance(method.get('enabled'),bool),f'{name}.enabled must be explicit boolean')
         require(isinstance(method.get('solver'),str),f'{name}.solver is required')
         require(method.get('kind','auto') in ('auto','learned','heuristic'),f'{name}: invalid kind')
@@ -125,7 +125,9 @@ def validate(data):
     require(isinstance(formats,list) and bool(formats) and set(formats)<= {'png','pdf'},'reporting.formats must contain png/pdf')
     positive(data['reporting'].get('assessment_beta'),'reporting.assessment_beta')
     calibration=data.get('calibration',{})
-    keys(calibration,['methods','seeds','requests','search_space','criteria','beta_suggestion','adopt_beta_for'],'calibration')
+    keys(calibration,['methods','seeds','requests','search_space','criteria','beta_suggestion','adopt_beta_for',
+                      'reliability_scenarios','require_qualified'],'calibration')
+    require(isinstance(calibration.get('require_qualified',False),bool),'calibration.require_qualified must be boolean')
     if calibration:
         seed_list(calibration['seeds'],'calibration')
         require(set(calibration['seeds']).isdisjoint(train['seeds']+evaluation['seeds']),'Calibration seeds must be disjoint from training/evaluation seeds')

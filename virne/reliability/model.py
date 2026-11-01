@@ -13,6 +13,22 @@ SLA_REQUIREMENT = 'availability_requirement'
 SLA_LEVELS = (0.99, 0.999, 0.9995, 0.9999)
 
 
+def categorical_rates(value):
+    """Validate categorical support without drawing from any RNG."""
+    values = np.asarray(value.get('values'), dtype=float)
+    probabilities = np.asarray(value.get('probabilities'), dtype=float)
+    if (values.ndim != 1 or not len(values) or len(set(values)) != len(values)
+            or not np.all(np.isfinite(values) & (values > 0))):
+        raise ValueError('Categorical rates require unique finite positive values')
+    if (probabilities.shape != values.shape
+            or not np.all(np.isfinite(probabilities) & (probabilities >= 0))
+            or not math.isclose(float(probabilities.sum()), 1., rel_tol=1e-9)):
+        raise ValueError('Categorical probabilities must match values and sum to one')
+    if set(value) != {'distribution', 'values', 'probabilities'}:
+        raise ValueError('Categorical rate keys are distribution, values, probabilities')
+    return values, probabilities
+
+
 def component_availability(lambda_f: float, mu_r: float) -> float:
     """Steady-state UP probability of an independent two-state CTMC."""
     if not all(math.isfinite(x) and x > 0 for x in (lambda_f, mu_r)):
@@ -44,6 +60,9 @@ class ReliabilityAttributeProvider:
             raise ValueError(f'Explicit reliability {name} configuration is required')
         if isinstance(value, Mapping) or hasattr(value, 'items'):
             distribution = value.get('distribution')
+            if distribution == 'categorical':
+                values, probabilities = categorical_rates(value)
+                return rng.choice(values, size=size, p=probabilities)
             if distribution != 'uniform':
                 raise ValueError(f'Unsupported rate distribution: {distribution}')
             low, high = float(value['low']), float(value['high'])
@@ -63,17 +82,44 @@ class ReliabilityAttributeProvider:
         groups = [('nodes', list(p_net.nodes), p_net.nodes)]
         if self.mode == 'node_and_link':
             groups.append(('links', list(p_net.edges), p_net.edges))
+        # Opt-in stream separation preserves every legacy scalar/uniform draw.
+        categorical = any(
+            hasattr((self.config.get(group) or {}).get(rate), 'get')
+            and self.config[group][rate].get('distribution') == 'categorical'
+            for group, _, _ in groups for rate in (RATE_FAILURE, RATE_REPAIR))
+        root_seed = self.config.get('seed', seed)
+        streams = np.random.SeedSequence(root_seed).spawn(4) if categorical else None
         # Validate all rates before writing any attributes.
         prepared = []
-        for name, components, view in groups:
+        for group_index, (name, components, view) in enumerate(groups):
             spec = self.config.get(name) or {}
-            failures = self._rates(spec, RATE_FAILURE, len(components), rng)
-            repairs = self._rates(spec, RATE_REPAIR, len(components), rng)
+            if categorical:
+                # Stable assignments even if callers insert the same nodes in another order.
+                def component_key(item):
+                    if name == 'links' and not p_net.is_directed():
+                        return tuple(sorted((type(node).__name__, repr(node)) for node in item))
+                    return (type(item).__name__, repr(item))
+                components = sorted(components, key=component_key)
+            failures = self._rates(spec, RATE_FAILURE, len(components),
+                                   np.random.default_rng(streams[2*group_index]) if streams else rng)
+            repairs = self._rates(spec, RATE_REPAIR, len(components),
+                                  np.random.default_rng(streams[2*group_index+1]) if streams else rng)
             for component, failure, repair in zip(components, failures, repairs):
+                metadata = {}
+                for rate_name, sampled in ((RATE_FAILURE, failure), (RATE_REPAIR, repair)):
+                    rate_spec = spec.get(rate_name)
+                    if hasattr(rate_spec, 'get') and rate_spec.get('distribution') == 'categorical':
+                        support, _ = categorical_rates(rate_spec)
+                        metadata[rate_name + '_class'] = int(np.flatnonzero(support == sampled)[0])
+                if 'lambda_f_class' in metadata:
+                    metadata['reliability_class'] = metadata['lambda_f_class']
                 prepared.append((view[component], float(failure), float(repair),
-                                 component_availability(float(failure), float(repair))))
-        for data, failure, repair, availability in prepared:
+                                 component_availability(float(failure), float(repair)), metadata))
+        for data, failure, repair, availability, metadata in prepared:
+            for key in ('lambda_f_class', 'mu_r_class', 'reliability_class'):
+                data.pop(key, None)
             data.update(lambda_f=failure, mu_r=repair, availability=availability)
+            data.update(metadata)
         p_net.graph['reliability_mode'] = self.mode
         p_net.graph['reliability_config_id'] = self.config.get('config_id') or 'explicit-unidentified'
 

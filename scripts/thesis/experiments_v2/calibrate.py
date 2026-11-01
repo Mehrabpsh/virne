@@ -29,19 +29,30 @@ def plan_calibration(path,sets):
     from scripts.thesis.experiments_v2.config.schema import parse_assignments
     for key,value in parse_assignments(sets):set_path(data,key,value)
     calibration=data.get('calibration',{})
-    require(bool(calibration.get('search_space')),'Calibration requires an explicit nonempty search_space')
+    require(bool(calibration.get('search_space')) or bool(calibration.get('reliability_scenarios')),
+            'Calibration requires a search_space or named reliability_scenarios')
     positive(calibration.get('requests'),'calibration.requests',True)
     names=calibration.get('methods')
     require(isinstance(names,list) and bool(names) and len(set(names))==len(names),'Calibration methods must be a unique nonempty list')
     resolved,_=resolve(path,sets,subset=names)
     require(all(m['capabilities']['kind']=='heuristic' for m in resolved['selected_methods'].values()),'Calibration cannot train or evaluate learned methods')
-    space=calibration['search_space']
+    space=calibration.get('search_space',{})
+    scenarios=calibration.get('reliability_scenarios',{})
+    require(isinstance(scenarios,dict),'reliability_scenarios must be a named mapping')
+    if scenarios:
+        require(not any(k.startswith('environment.reliability') for k in space),
+                'Named scenarios cannot be crossed with reliability search paths')
+        for name,scenario in scenarios.items():
+            require(isinstance(name,str) and bool(name) and isinstance(scenario,dict), 'Invalid named reliability scenario')
+        space={**space,'environment.reliability':list(scenarios.values())}
     for key,values in space.items():
         require(key.startswith('environment.'),f'Calibration searches only environment paths: {key}')
         get_path(data,key)
         require(isinstance(values,list) and bool(values),f'Empty calibration candidates for {key}')
     criteria=calibration['criteria']
-    keys(criteria,['acceptance_rate','sla_satisfaction_rate','minimum_peak_utilization','require_all_sla_classes','require_monotonic_sla_difficulty','monotonic_tolerance'],'calibration.criteria')
+    keys(criteria,['acceptance_rate','sla_satisfaction_rate','minimum_peak_utilization','require_all_sla_classes','require_monotonic_sla_difficulty','monotonic_tolerance',
+                   'require_no_proven_impossible'],'calibration.criteria')
+    require(isinstance(criteria.get('require_no_proven_impossible',False),bool),'require_no_proven_impossible must be boolean')
     for name in ('acceptance_rate','sla_satisfaction_rate'):
         require(0<=criteria[name]['min']<criteria[name]['max']<=1,f'Invalid calibration interval {name}')
     require(0<=criteria['minimum_peak_utilization']<=1,'Invalid utilization threshold')
@@ -55,7 +66,8 @@ def plan_calibration(path,sets):
         for key,value in selected.items():set_path(candidate,key,value)
         candidate['environment']['workload']['num_requests']=calibration['requests']
         r,_=resolve(path,subset=names,document=candidate)
-        candidates.append({'point_id':f'grid_{index:03d}','selected':selected,'resolved':r})
+        scenario_name=next((name for name,value in scenarios.items() if value==selected.get('environment.reliability')),None)
+        candidates.append({'point_id':f'grid_{index:03d}','selected':selected,'resolved':r,'reliability_scenario':scenario_name})
     return resolved,original,data,candidates
 
 
@@ -65,6 +77,9 @@ def select(points,criteria):
            'minimum_peak_utilization':criteria['minimum_peak_utilization']}
     for point in points:
         point['selection_loss']=score(point,rules)
+        if criteria.get('require_no_proven_impossible',False):
+            require('proven_impossible_fraction' in point,'Missing attainability diagnostics')
+            point['selection_loss']+=point['proven_impossible_fraction']
         point['qualifies']=point['selection_loss']==0 and (not criteria['require_all_sla_classes'] or point['class_coverage']==point['expected_class_count'])
     return min(points,key=lambda p:(not p['qualifies'],p['selection_loss'],p['point_id']))
 
@@ -75,7 +90,7 @@ def execute(path,sets,output,results=None):
     bundle=new_bundle(resolved,results,'_calibration');install_signals();start=time.monotonic();rows=[];manifest=[]
     calibration=data['calibration'];warnings=[]
     plan={'tool':'calibration','hardware':hardware('cpu'),'methods':calibration['methods'],'seeds':calibration['seeds'],
-          'search_space':calibration['search_space'],'job_count':len(candidates)*len(calibration['methods'])*len(calibration['seeds']),
+          'search_space':calibration.get('search_space',{}),'job_count':len(candidates)*len(calibration['methods'])*len(calibration['seeds']),
           'learned_methods_used':False}
     freeze(bundle,resolved,original,plan)
     try:
@@ -111,8 +126,15 @@ def execute(path,sets,output,results=None):
                 'sla_satisfaction_rate':frame.sla_satisfaction_rate.mean(),
                 'peak_utilization':frame[['peak_p_net_node_resource_utilization','peak_p_net_link_resource_utilization']].max(axis=1).mean(),
                 'max_inservice_count':frame.max_inservice_count.mean(),'class_order_penalty':penalty,'class_coverage':len(rates),
-                'expected_class_count':len(data['environment']['sla']['levels'])})
+                'expected_class_count':len(data['environment']['sla']['levels']),
+                'reliability_scenario':candidate['reliability_scenario'],
+                **({'proven_impossible_fraction':float(frame.proven_impossible_fraction.mean())}
+                   if 'proven_impossible_fraction' in frame else {})})
         chosen=select(points,calibration['criteria'])
+        if not chosen['qualifies'] and calibration.get('require_qualified',False):
+            write_json(bundle/'calibration_summary.json',{'runs':rows,'points':points,'selected':chosen,
+                       'exported':False,'reason':'No qualifying candidate'})
+            raise ConfigError('No qualifying calibration candidate; calibrated YAML was not exported')
         if not chosen['qualifies']:warnings.append('PROVISIONAL: no point met all target ranges/accepted-class coverage; least-degenerate point selected by declared loss and grid ID.')
         suggestion=None
         if calibration.get('beta_suggestion',{}).get('enabled'):
@@ -136,8 +158,9 @@ def execute(path,sets,output,results=None):
             target=f'methods.{method}.objective.beta';previous=get_path(calibrated,target)
             set_path(calibrated,target,suggestion['value']);adopted.append({'method':method,'previous':previous,'value':suggestion['value']})
         calibrated['calibration_result']={'source_config':str(path.resolve()),'source_config_sha256':hashlib.sha256(original.encode()).hexdigest(),'resolved_input_sha256':digest(data),
-            'source_commit':(bundle/'source_commit.txt').read_text().strip(),'searched_paths':list(calibration['search_space']),
-            'candidate_values':calibration['search_space'],'methods':calibration['methods'],'seeds':calibration['seeds'],
+            'source_commit':(bundle/'source_commit.txt').read_text().strip(),'searched_paths':list(chosen['selected']),
+            'candidate_values':calibration.get('search_space',{}),'reliability_scenarios':calibration.get('reliability_scenarios',{}),
+            'methods':calibration['methods'],'seeds':calibration['seeds'],
             'calibration_request_budget':calibration['requests'],'selected':chosen['selected'],'selection_metrics':chosen,
             'selection_rule':'Prefer qualifying points, then minimum normalized interval-distance + load-shortfall + SLA-order penalty, then grid ID; qualification additionally requires accepted SLA-class coverage if configured.',
             'criteria':calibration['criteria'],'warnings':warnings,'explicit_beta_adoptions':adopted,'report_directory':str(bundle)}

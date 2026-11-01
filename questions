@@ -1,0 +1,4 @@
+1- do i simulate failure of p_nets? at each macro-step where i embedd an SFC, the PN is updated. do some nodes gets unavailable too and some get which were unavailabe, become available? if No, why?    
+e.g. after the sfc embedded  and then there is a failure event on a node on which one vnf of the sfc hosts, what happens to the sfc status? should the model get punished? if so , how?
+
+2-

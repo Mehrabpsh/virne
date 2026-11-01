@@ -1,7 +1,8 @@
 # Thesis Experiment Framework v2
 
-This is experiment engineering around the frozen Virne implementation. No solver,
-reliability/SLA, reward or objective formulas are changed. All supplied numeric values
+This is experiment engineering around Virne's shared analytic availability, shortfall,
+and objective definitions. Optional heterogeneous reliability and scaled observations
+are described below. All supplied numeric values
 are **preliminary pipeline-validation settings**, not frozen scientific choices.
 
 ## Two independent tools
@@ -27,9 +28,9 @@ python scripts/thesis/experiments_v2/calibrate.py \
 # Run that calibrated environment without searching again.
 python scripts/thesis/experiments_v2/run_experiment.py --config results/main.calibrated.yaml
 
-# Larger, editable candidate budgets; review all values before scientific execution.
+# Heterogeneous candidate configuration: review the plan before scientific execution.
 python scripts/thesis/experiments_v2/run_experiment.py \
-  --config scripts/thesis/experiments_v2/examples/gpu_server.yaml
+  --config scripts/thesis/experiments_v2/examples/gpu_server.yaml --dry-run
 ```
 
 `--output NEW_DIRECTORY` selects an execution bundle. Existing directories/files are

@@ -15,7 +15,7 @@ from virne.solver.heuristic.node_rank import BaseNodeRankSolver
 from virne.solver.rank.node_rank import NRMNodeRank, GRCNodeRank
 
 
-def combine_rank(scores: dict, availability: dict, name: str, alpha=None, normalization=None) -> dict:
+def combine_rank(scores: dict, availability: dict, name: str, alpha=None, normalization=None, risk_scaler=None) -> dict:
     """Explicit validation candidates, never a silently selected final combine."""
     if normalization not in ('max', 'none'):
         raise ValueError('RA combine normalization must be explicitly max or none')
@@ -24,11 +24,15 @@ def combine_rank(scores: dict, availability: dict, name: str, alpha=None, normal
                   if normalization == 'max' else dict(scores))
     if name == 'product':
         return {node: normalized[node] * availability[node] for node in scores}
-    if name == 'weighted_sum':
+    if name in ('weighted_sum', 'normalized_risk_weighted_sum'):
         if alpha is None or not math.isfinite(alpha) or not 0 <= alpha <= 1:
             raise ValueError('RA weighted_sum requires explicit alpha in [0, 1]')
-        return {node: alpha*normalized[node]+(1-alpha)*availability[node] for node in scores}
-    raise ValueError('RA-NRM/RA-GRC combine must be explicitly product or weighted_sum')
+        if name == 'normalized_risk_weighted_sum' and risk_scaler is None:
+            raise ValueError('Normalized-risk ranking requires configured reliability support')
+        return {node: alpha*normalized[node]+(1-alpha)*(
+            risk_scaler.preference(availability[node]) if name == 'normalized_risk_weighted_sum'
+            else availability[node]) for node in scores}
+    raise ValueError('RA combine must be product, weighted_sum or normalized_risk_weighted_sum')
 
 
 class ReliabilityRankSolver(BaseNodeRankSolver):
@@ -40,7 +44,9 @@ class ReliabilityRankSolver(BaseNodeRankSolver):
             raise ValueError('RA heuristic requires reliability.enabled=true')
         self.base_rank = self.base_rank_cls()
         self.settings = config.ra_heuristic
-        combine_rank({}, {}, self.settings.combine, self.settings.alpha, self.settings.normalization)
+        from virne.reliability.scaling import LogRiskScaler
+        self.risk_scaler = LogRiskScaler(config.reliability.nodes) if self.settings.combine == 'normalized_risk_weighted_sum' else None
+        combine_rank({}, {}, self.settings.combine, self.settings.alpha, self.settings.normalization, self.risk_scaler)
         self.evaluator = ReliabilityEvaluator(config.reliability.mode)
         self.link_rank = None
 
@@ -49,7 +55,7 @@ class ReliabilityRankSolver(BaseNodeRankSolver):
         base_scores = self.base_rank(p_net, sort=False)
         availability = {node: self.evaluator.availability(p_net, {'node_slots': {0: node}})
                         for node in p_net.nodes}
-        combined = combine_rank(base_scores, availability, self.settings.combine, self.settings.alpha, self.settings.normalization)
+        combined = combine_rank(base_scores, availability, self.settings.combine, self.settings.alpha, self.settings.normalization, self.risk_scaler)
         physical_order = sorted(combined, key=combined.get, reverse=True)
         return self.controller.node_mapper.node_mapping(
             v_net, p_net, sorted_v_nodes=virtual_order, sorted_p_nodes=physical_order,

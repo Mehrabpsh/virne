@@ -52,6 +52,12 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
     for key,value in raw:
         if under(key,('p_net_setting','v_sim_setting','reliability','sla')):put(method_common,key,value)
     methods={};warnings=[]
+    from virne.reliability.diagnostics import configured_upper_bound
+    bound=configured_upper_bound(expected_contract['reliability'],expected_contract['v_sim_setting']['v_net_size']['low'])
+    impossible=[level for level in expected_contract['sla']['levels'] if level>bound]
+    if impossible:
+        warnings.append(f'Optimistic connected-request availability upper bound {bound:.12g}; '
+                        f'SLA levels {impossible} are structurally unattainable in this scenario.')
     for name in selected:
         spec=data['methods'][name]
         cap=inspect_solver(spec['solver'],spec.get('kind','auto'))

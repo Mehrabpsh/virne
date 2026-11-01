@@ -5,12 +5,15 @@ import numpy as np
 
 from virne.reliability.evaluator import ReliabilityEvaluator, validate_availability
 from virne.reliability.model import AVAILABILITY, DiscreteRequestSLAModel
+from virne.reliability.scaling import LogRiskScaler, remaining_budget_fraction
 
 
 FEATURE_NAMES = ('raw_availability', 'sla_requirement', 'sla_margin',
-                 'partial_availability', 'log_risk', 'remaining_budget')
+                 'partial_availability', 'log_risk', 'remaining_budget',
+                 'normalized_log_risk', 'remaining_budget_fraction')
 COMPONENT_FEATURES = ('raw_availability', 'sla_margin', 'log_risk')
-CONTEXT_FEATURES = ('sla_requirement', 'partial_availability', 'remaining_budget')
+CONTEXT_FEATURES = ('sla_requirement', 'partial_availability', 'remaining_budget',
+                    'remaining_budget_fraction')
 
 
 def feature_names(config) -> tuple[str, ...]:
@@ -33,8 +36,11 @@ def feature_dimensions(config) -> tuple[int, int, int]:
 def feature_signature(config) -> dict:
     names = feature_names(config)
     # With no features the original architecture remains compatible in either mode.
-    return {'names': list(names), 'mode': config.reliability.mode if names else None,
-            'version': 1}
+    signature = {'names': list(names), 'mode': config.reliability.mode if names else None,
+                 'version': 1}
+    if 'normalized_log_risk' in names:
+        signature['node_risk_bounds'] = LogRiskScaler(config.reliability.nodes).signature()
+    return signature
 
 
 class ReliabilityFeatureProvider:
@@ -42,6 +48,7 @@ class ReliabilityFeatureProvider:
         self.names = feature_names(config)
         self.mode = config.get('reliability', {}).get('mode', 'node_only')
         self.evaluator = ReliabilityEvaluator(self.mode) if self.names else None
+        self.node_scaler = LogRiskScaler(config.reliability.nodes) if 'normalized_log_risk' in self.names else None
 
     def extend(self, obs, p_net, v_net, solution):
         if not self.names:
@@ -51,7 +58,8 @@ class ReliabilityFeatureProvider:
         # Use the backend log product for budget stability even on underflow.
         log_partial = self.evaluator.backend.log_availability(p_net, solution, self.mode)
         context = {'sla_requirement': required, 'partial_availability': partial,
-                   'remaining_budget': -math.log(required) + log_partial}
+                   'remaining_budget': -math.log(required) + log_partial,
+                   'remaining_budget_fraction': remaining_budget_fraction(required, log_partial)}
 
         def row(availability, names):
             values = dict(context)
@@ -59,6 +67,8 @@ class ReliabilityFeatureProvider:
                 availability = validate_availability(availability)
                 values.update(raw_availability=availability,
                               sla_margin=availability-required, log_risk=-math.log(availability))
+                if 'normalized_log_risk' in names:
+                    values['normalized_log_risk'] = self.node_scaler.risk(availability)
             return [values[name] for name in names]
 
         p_features = [row(p_net.nodes[n][AVAILABILITY], self.names) for n in p_net.nodes]

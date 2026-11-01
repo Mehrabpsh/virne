@@ -97,8 +97,10 @@ def test_feature_values_and_ordering(tmp_path):
     node_a = p_net.nodes[0]['availability']
     np.testing.assert_allclose(result['p_net_x'][0, 1:],
                                [node_a, .999, node_a-.999, availability, -np.log(node_a),
-                                -np.log(.999)+np.log(availability)], rtol=1e-6, atol=1e-8)
-    np.testing.assert_allclose(result['v_net_x'][0, 1:], [.999, availability, -np.log(.999)+np.log(availability)])
+                                -np.log(.999)+np.log(availability), 0.,
+                                1.+np.log(availability)/-np.log(.999)], rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(result['v_net_x'][0, 1:], [.999, availability, -np.log(.999)+np.log(availability),
+                                                      1.+np.log(availability)/-np.log(.999)])
 
 
 def test_disabled_generators_preserve_original_stream(tmp_path):

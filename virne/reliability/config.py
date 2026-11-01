@@ -1,6 +1,6 @@
 """Fail early on incomplete scientific configuration; disabled mode is a no-op."""
 
-from virne.reliability.features import feature_names
+from virne.reliability.features import feature_names, feature_signature
 from virne.reliability.model import DiscreteRequestSLAModel
 from virne.reliability.service import ReliabilityService
 
@@ -16,6 +16,7 @@ def validate_reliability_config(config) -> None:
         raise ValueError('Reliability-aware recording/reward requires sla.enabled=true')
     ReliabilityService(config)
     DiscreteRequestSLAModel(config.sla)
+    feature_signature(config)
     if feature_names(config) and config.solver.solver_name != 'ppo_dual_gat+':
         if config.solver.solver_name == 'cand_rl':
             raise ValueError('Cand-RL has its own observation; set reliability_features.enabled=false')

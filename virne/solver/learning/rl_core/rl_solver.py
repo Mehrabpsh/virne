@@ -564,9 +564,9 @@ class PPOSolver(RLSolver):
 
     def __init__(self, controller, recorder, counter, logger, config, make_policy, obs_as_tensor, **kwargs):
         super(PPOSolver, self).__init__(controller, recorder, counter, logger, config, make_policy, obs_as_tensor, **kwargs)
-        self.repeat_times = kwargs.get('repeat_times', 10)
-        self.gae_lambda = kwargs.get('gae_lambda', 0.98)
-        self.eps_clip = kwargs.get('eps_clip', 0.2)
+        self.repeat_times = kwargs.get('repeat_times', self.config.rl.repeat_times)
+        self.gae_lambda = kwargs.get('gae_lambda', self.config.rl.gae_lambda)
+        self.eps_clip = kwargs.get('eps_clip', self.config.rl.eps_clip)
 
     def calculate_kl_divergence(self, old_observations, old_policy):
         actions_logits = self.policy.act(old_observations)

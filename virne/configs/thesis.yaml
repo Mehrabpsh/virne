@@ -47,6 +47,7 @@ cand_rl:
   hidden_dims: null
   mask_padding: null
   redundancy: null
+  observation_features: []  # opt-in normalized_log_risk / remaining_budget_fraction
 potential:
   definition: null
   terminal_convention: null

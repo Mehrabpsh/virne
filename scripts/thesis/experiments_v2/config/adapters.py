@@ -25,11 +25,16 @@ def put(config, path, value):
 
 def rate(value, name):
     if isinstance(value,dict):
+        if value.get('distribution')=='categorical':
+            from virne.reliability.model import categorical_rates
+            try:categorical_rates(value)
+            except (ValueError,TypeError) as exc:raise ConfigError(f'{name}: {exc}') from exc
+            return copy.deepcopy(value)
         if value.get('distribution')=='fixed':
             keys(value,['distribution','value'],name);positive(value.get('value'),name)
             return float(value['value'])
         keys(value,['distribution','low','high'],name)
-        require(value.get('distribution')=='uniform',f'{name}: only scalar, fixed or uniform rates are supported; scale pseudo-keys are not supported')
+        require(value.get('distribution')=='uniform',f'{name}: only scalar, fixed, uniform or categorical rates are supported')
         positive(value.get('low'),name+'.low');positive(value.get('high'),name+'.high')
         require(value['low']<=value['high'],f'{name}: low exceeds high')
         return copy.deepcopy(value)
@@ -113,8 +118,10 @@ def method_config(common, method):
         for key,value in method.get('network',{}).items():put(config,'cand_rl.'+key,value)
         for key in ('profile','redundancy'):
             if key in method:put(config,'cand_rl.'+key,method[key])
+        if 'observation_features' in method:
+            put(config,'cand_rl.observation_features',method['observation_features'])
     else:
-        require(not any(k in method for k in ('candidate','endpoints','profile','redundancy')),f'{solver}: Cand structured settings require cand_rl')
+        require(not any(k in method for k in ('candidate','endpoints','profile','redundancy','observation_features')),f'{solver}: Cand structured settings require cand_rl')
         for key,value in method.get('network',{}).items():put(config,'nn.'+key,value)
     for group in ('ra_heuristic','ra_evne'):
         for key,value in method.get(group,{}).items():put(config,group+'.'+key,value)
@@ -202,7 +209,9 @@ def validate_virne(config):
         if config['solver']['solver_name'] in ('ra_nrm','ra_grc'):
             from virne.solver.heuristic.reliability_rank import combine_rank
             require(config['reliability']['enabled'],'RA ranking requires reliability awareness')
-            combine_rank({}, {},cfg.ra_heuristic.combine,cfg.ra_heuristic.alpha,cfg.ra_heuristic.normalization)
+            from virne.reliability.scaling import LogRiskScaler
+            scaler = LogRiskScaler(cfg.reliability.nodes) if cfg.ra_heuristic.combine=='normalized_risk_weighted_sum' else None
+            combine_rank({}, {},cfg.ra_heuristic.combine,cfg.ra_heuristic.alpha,cfg.ra_heuristic.normalization,scaler)
         if config['solver']['solver_name'] in ('ra_evne_a','ra_evne_original'):
             positive(cfg.ra_evne.empty_distance,'ra_evne.empty_distance')
             for group in ('p_net_setting','v_sim_setting'):

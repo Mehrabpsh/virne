@@ -156,13 +156,8 @@ def generated(config_path, assessment=True):
 
 def input_snapshot(pn,sim):
     """Include full resource demands, topology, time and assigned SLA, in graph order."""
-    def graph(g):
-        return {'nodes':[(n,dict(a)) for n,a in g.nodes(data=True)],
-                'edges':[(u,v,dict(a)) for u,v,a in g.edges(data=True)]}
-    substrate=graph(pn)
-    requests=[dict(graph(v),id=v.id,arrival_time=v.arrival_time,lifetime=v.lifetime,
-                   sla=v.graph.get('availability_requirement')) for v in sim.v_nets]
-    return {'substrate':substrate,'requests':requests}
+    from virne.reliability.provenance import input_snapshot as snapshot
+    return snapshot(pn,sim)
 
 
 def digest(value):
@@ -179,7 +174,17 @@ def collect_row(row, bundle, *, assessment_beta=None, assessment_mode=None):
         raise FileNotFoundError(f'No final records: {directory}')
     frame=pd.read_csv(paths[-1])
     metrics=Counter.summary_records(frame)
-    cfg,pn,sim=generated(directory/'config.yaml')
+    cfg,pn,sim=generated(directory/'config.yaml', assessment=False)
+    runtime_path=directory/'runtime_inputs.json'
+    runtime_verified=False
+    if runtime_path.exists():
+        if digest(json.loads(runtime_path.read_text()))!=digest(input_snapshot(pn,sim)):
+            raise ValueError('Live runtime inputs differ from regenerated full inputs')
+        runtime_verified=True
+    if not cfg.reliability.enabled:
+        from virne.reliability.model import ReliabilityAttributeProvider, DiscreteRequestSLAModel
+        ReliabilityAttributeProvider(cfg.reliability).apply(pn,seed=cfg.experiment.seed)
+        DiscreteRequestSLAModel(cfg.sla).assign(sim.v_nets,seed=cfg.experiment.seed)
     snapshot=input_snapshot(pn,sim)
     arrivals=frame.loc[frame.event_type==1].copy()
     for key in ('delivered_availability','sla_shortfall'):
@@ -222,6 +227,32 @@ def collect_row(row, bundle, *, assessment_beta=None, assessment_mode=None):
         metrics['mean_'+key]=frame[key].mean()
         metrics['peak_'+key]=frame[key].max()
     accepted=arrivals.loc[arrivals.result.astype(str).str.lower()=='true']
+    from virne.reliability.diagnostics import availability_upper_bound, classify_attainability
+    for idx,r in arrivals.iterrows():
+        bound=availability_upper_bound(pn,expected[r.v_net_id],evaluator.mode)
+        arrivals.loc[idx,'availability_upper_bound']=bound
+        arrivals.loc[idx,'attainability_status']=classify_attainability(bound,float(r.availability_requirement),
+            str(r.result).lower()=='true' and bool(r.sla_satisfied))
+    classes={}
+    for level,group in arrivals.groupby('availability_requirement'):
+        classes[str(level)]={status:int(group.attainability_status.eq(status).sum())
+            for status in ('proven_impossible','witnessed_attainable','unknown')}
+        classes[str(level)]['arrivals']=len(group)
+    metrics['attainability_summary_json']=json.dumps(classes,sort_keys=True)
+    metrics['proven_impossible_fraction']=float(arrivals.attainability_status.eq('proven_impossible').mean())
+    node_availability=[d['availability'] for _,d in pn.nodes(data=True)]
+    metrics['reliability_summary_json']=json.dumps({'node_availability_min':min(node_availability),
+        'node_availability_max':max(node_availability),'node_class_counts':dict(
+            pd.Series([d.get('reliability_class','scalar_or_uniform') for _,d in pn.nodes(data=True)]).astype(str).value_counts())},default=int)
+    utility_beta=cfg.joint_objective.beta if cfg.joint_objective.beta is not None else assessment_beta
+    arrivals['assessment_compliance']=np.exp(-utility_beta*arrivals.sla_shortfall)
+    arrivals['assessment_utility']=arrivals.v_net_r2c_ratio*arrivals.assessment_compliance
+    metrics['utility_diagnostics_json']=json.dumps(clean({str(level):{
+        'beta':utility_beta,'accepted':len(group),
+        'shortfall_quantiles':group.sla_shortfall.quantile([0,.25,.5,.75,1]).to_dict(),
+        'utility_quantiles':group.assessment_utility.quantile([0,.25,.5,.75,1]).to_dict(),
+        'fraction_utility_below_1e_6':float(group.assessment_utility.lt(1e-6).mean())}
+        for level,group in arrivals.loc[arrivals.result.astype(str).str.lower()=='true'].groupby('availability_requirement')}))
     metrics['delivered_availability_distribution_json']=json.dumps(clean(accepted.delivered_availability.describe().to_dict())) if 'delivered_availability' in accepted else '{}'
     metrics['v_net_count']=len(arrivals)
     metrics.update(row)
@@ -230,7 +261,8 @@ def collect_row(row, bundle, *, assessment_beta=None, assessment_mode=None):
                    objective=cfg.joint_objective.name,reward=cfg.rl.reward_calculator.name,
                    beta=cfg.joint_objective.beta,topology=cfg.p_net_setting.topology.type,
                    assessment_mode=evaluator.mode,assessment_provenance='frozen evaluator applied to recorded mappings',
-                   input_hash=digest(snapshot),source_commit=(directory/'source_commit.txt').read_text().strip(),
+                   input_hash=digest(snapshot),runtime_inputs_verified=runtime_verified,
+                   source_commit=(directory/'source_commit.txt').read_text().strip(),
                    model_reload_observed='Loaded pretrained model from '+row['model_path'] in (directory/'stdout.log').read_text() if row['phase']=='eval' and row['category']=='learned' else None)
     fpdir=Path(bundle)/'input_fingerprints'
     fpdir.mkdir(exist_ok=True)

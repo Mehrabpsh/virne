@@ -10,7 +10,11 @@ from .planner import final_config, system_mode
 def flatten(data,prefix=''):
     for key,value in data.items():
         path=prefix+'.'+key if prefix else key
-        if isinstance(value,dict) and value:
+        # Hydra's base rate fields are null scalars: replace them atomically,
+        # rather than emitting nonexistent dotted distribution/value subkeys.
+        rate_mapping = path in {f'reliability.{group}.{rate}'
+            for group in ('nodes','links') for rate in ('lambda_f','mu_r')}
+        if isinstance(value,dict) and value and not rate_mapping:
             yield from flatten(value,path)
         else:
             yield path,value
