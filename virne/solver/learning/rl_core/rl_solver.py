@@ -29,7 +29,7 @@ from virne.solver.heuristic.node_rank import *
 from .searcher import *
 from .buffer import RolloutBuffer
 from .shared_adam import SharedAdam, sync_gradients
-from ..utils import apply_mask_to_logit, get_observations_sample, RunningMeanStd
+from ..utils import apply_mask_to_logit, categorical_from_logits, get_observations_sample, RunningMeanStd
 from virne.utils import test_running_time
 
 
@@ -145,7 +145,7 @@ class RLSolver(Solver):
             candidate_action_logits = apply_mask_to_logit(action_logits, mask) 
         else:
             candidate_action_logits = action_logits
-        action_prob_dist = F.softmax(candidate_action_logits / self.softmax_temp, dim=-1)
+        action_prob_dist = categorical_from_logits(candidate_action_logits, self.softmax_temp).probs
         return action_prob_dist, candidate_action_logits
 
     def select_action(self, observation, sample=True):
@@ -156,8 +156,8 @@ class RLSolver(Solver):
             candidate_action_logits = apply_mask_to_logit(action_logits, mask) 
         else:
             candidate_action_logits = action_logits
-        candidate_action_dist = Categorical(logits=candidate_action_logits / self.softmax_temp)
-        raw_action_dist = Categorical(logits=action_logits / self.softmax_temp)
+        candidate_action_dist = categorical_from_logits(candidate_action_logits, self.softmax_temp)
+        raw_action_dist = categorical_from_logits(action_logits, self.softmax_temp)
 
         if self.config.rl.mask_actions and self.config.rl.maskable_policy:
             action_dist_for_log_prob = candidate_action_dist
@@ -188,10 +188,8 @@ class RLSolver(Solver):
             masks = None
             candidate_actions_logits = actions_logits
 
-        candidate_actions_probs = F.softmax(candidate_actions_logits, dim=-1)
-
-        dist = Categorical(actions_probs)
-        candidate_dist = Categorical(candidate_actions_probs)
+        dist = categorical_from_logits(actions_logits, self.softmax_temp)
+        candidate_dist = categorical_from_logits(candidate_actions_logits, self.softmax_temp)
         policy_dist = candidate_dist if self.config.rl.mask_actions and self.config.rl.maskable_policy else dist
 
         action_logprobs = policy_dist.log_prob(old_actions)
@@ -571,10 +569,8 @@ class PPOSolver(RLSolver):
     def calculate_kl_divergence(self, old_observations, old_policy):
         actions_logits = self.policy.act(old_observations)
         old_actions_logits = old_policy.act(old_observations)
-        actions_probs = F.softmax(actions_logits / self.softmax_temp, dim=-1)
-        old_actions_probs = F.softmax(old_actions_logits / self.softmax_temp, dim=-1)
-        dist = Categorical(actions_probs)
-        old_dist = Categorical(old_actions_probs)
+        dist = categorical_from_logits(actions_logits, self.softmax_temp)
+        old_dist = categorical_from_logits(old_actions_logits, self.softmax_temp)
         kl_divergence = torch.distributions.kl_divergence(dist, old_dist).mean()
         return kl_divergence
         

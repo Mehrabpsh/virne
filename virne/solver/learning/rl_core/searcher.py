@@ -17,7 +17,7 @@ import torch.multiprocessing as mp
 from torch.distributions import Categorical
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-from ..utils import apply_mask_to_logit
+from ..utils import apply_mask_to_logit, categorical_from_logits
 
 
 def get_searcher(decode_strategy, policy, preprocess_obs_func, k, device, mask_actions, maskable_policy, make_policy_func):
@@ -61,11 +61,9 @@ def select_action(
         candidate_action_logits = action_logits
 
     if mask_actions and maskable_policy:
-        candidate_action_probs = F.softmax(candidate_action_logits / softmax_temp, dim=-1)
-        candidate_action_dist = Categorical(probs=candidate_action_probs)
+        candidate_action_dist = categorical_from_logits(candidate_action_logits, softmax_temp)
     else:
-        candidate_action_probs = F.softmax(action_logits / softmax_temp, dim=-1)
-        candidate_action_dist = Categorical(probs=candidate_action_probs)
+        candidate_action_dist = categorical_from_logits(action_logits, softmax_temp)
 
     if sample:
         action = candidate_action_dist.sample()
@@ -153,7 +151,7 @@ def get_action_distribution(policy, observation, softmax_temp=1.0, mask=None, ma
         candidate_action_logits = apply_mask_to_logit(action_logits, mask)
     else:
         candidate_action_logits = action_logits
-    candidate_action_probs = F.softmax(candidate_action_logits / softmax_temp, dim=-1)
+    candidate_action_probs = categorical_from_logits(candidate_action_logits, softmax_temp).probs
     return candidate_action_probs
 
 
@@ -195,11 +193,9 @@ class Searcher:
             candidate_action_logits = action_logits
 
         if self.mask_actions and self.maskable_policy:
-            candidate_action_probs = F.softmax(candidate_action_logits / self.softmax_temp, dim=-1)
-            candidate_action_dist = Categorical(probs=candidate_action_probs)
+            candidate_action_dist = categorical_from_logits(candidate_action_logits, self.softmax_temp)
         else:
-            candidate_action_probs = F.softmax(action_logits / self.softmax_temp, dim=-1)
-            candidate_action_dist = Categorical(probs=candidate_action_probs)
+            candidate_action_dist = categorical_from_logits(action_logits, self.softmax_temp)
 
         if sample:
             action = candidate_action_dist.sample()

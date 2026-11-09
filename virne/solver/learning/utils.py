@@ -1,3 +1,4 @@
+import math
 import torch
 import numpy as np
 import networkx as nx
@@ -7,8 +8,8 @@ from sklearn.preprocessing import StandardScaler, Normalizer
 
 from virne.network import *
 
-# A constant tensor used to mask values
-NEG_TENSER = torch.tensor(-1e8).float()
+# Forbidden actions must remain below every finite policy logit or Q value.
+NEG_TENSER = torch.tensor(-torch.inf).float()
 ZERO_TENSER = torch.tensor(0.).float()
 
 
@@ -166,6 +167,24 @@ def apply_mask_to_logit(logit, mask=None):
     mask_value_tensor = NEG_TENSER.type_as(logit).to(logit.device)
     masked_logit = torch.where(mask, logit, mask_value_tensor)
     return masked_logit
+
+
+def categorical_from_logits(logits, temperature=1.0):
+    """Construct the same stable categorical distribution for rollout and PPO.
+
+    Policies may accumulate a large common logit offset. Subtract it before
+    Categorical's logsumexp normalization to avoid cancellation in float32.
+    Keep logits rather than converting through probabilities: that conversion
+    clips rare-action log probabilities at log(machine epsilon) and changes
+    PPO likelihood ratios and gradients. Masked entries may be -inf.
+    """
+    if not math.isfinite(temperature) or temperature <= 0:
+        raise ValueError('Categorical temperature must be finite and positive')
+    maximum = logits.amax(dim=-1, keepdim=True)
+    if not torch.isfinite(maximum).all():
+        raise ValueError('Categorical requires a finite logit in every action row')
+    centered_logits = (logits - maximum) / temperature
+    return torch.distributions.Categorical(logits=centered_logits)
 
 def apply_mask_to_prob(prob, mask=None):
     """
