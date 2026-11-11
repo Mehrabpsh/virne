@@ -100,7 +100,7 @@ def validate(data):
         require(name in data['environment'],f'Missing environment.{name}')
     keys(data['protocol'],['training','evaluation'],'protocol')
     keys(data['protocol']['training'],['seeds','epochs','online'],'protocol.training')
-    keys(data['protocol']['evaluation'],['seeds','online'],'protocol.evaluation')
+    keys(data['protocol']['evaluation'],['seeds','online','live_failures'],'protocol.evaluation')
     train=data['protocol']['training'];evaluation=data['protocol']['evaluation']
     seed_list(train['seeds'],'training');seed_list(evaluation['seeds'],'evaluation')
     require(set(train['seeds']).isdisjoint(evaluation['seeds']),'Training/evaluation seeds must be disjoint')
@@ -108,6 +108,9 @@ def validate(data):
     require(isinstance(train.get('online',False),bool),'protocol.training.online must be boolean')
     require(isinstance(evaluation.get('online'),bool),'protocol.evaluation.online must be boolean')
     require(evaluation['online'], 'OfflineSystem evaluation is not supported cleanly: Virne resets and scales substrate resources by 0.75 between requests while retaining the arrival/departure ledger. Use protocol.evaluation.online=true.')
+    from virne.reliability.live_failures import validate_settings
+    try:validate_settings(evaluation.get('live_failures',{}))
+    except (ValueError,TypeError) as exc:raise ConfigError(str(exc)) from exc
     keys(data['learning_defaults'],['batch_size','target_steps','repeat_times','network','learning_rate'],'learning_defaults')
     require(isinstance(data['methods'],dict) and bool(data['methods']),'methods must be a nonempty mapping')
     for name,method in data['methods'].items():

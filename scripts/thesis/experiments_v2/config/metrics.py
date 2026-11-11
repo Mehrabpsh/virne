@@ -13,6 +13,8 @@ def supported():
             and isinstance(node.value,ast.Name) and node.value.id=='summary_info'
             and isinstance(node.slice,ast.Constant) and isinstance(node.slice.value,str)}
     fields.update(METRICS)
+    from virne.reliability.live_failures import LIVE_METRICS
+    fields.update(LIVE_METRICS)
     fields.update(['sla_accepted_count','v_net_count','runtime'])
     fields.update(prefix+name for prefix in ('mean_','peak_') for name in ('p_net_node_resource_utilization','p_net_link_resource_utilization'))
     return fields

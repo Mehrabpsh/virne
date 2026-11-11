@@ -75,6 +75,8 @@ class ConstraintChecker:
         assert p_node_id in list(p_net.nodes)
         v_node_info, p_node_info = v_net.nodes[v_node_id], p_net.nodes[p_node_id]
         final_result, node_satisfiability_info = self.check_constraint_satisfiability(v_node_info, p_node_info, self.node_constraint_attrs_checking_at_node)
+        from virne.reliability.live_failures import node_operational
+        final_result = final_result and node_operational(p_net, p_node_id)
         return final_result, node_satisfiability_info
 
     def check_link_level_constraints(self, v_net, p_net, v_link_pair, p_link_pair):
@@ -94,6 +96,8 @@ class ConstraintChecker:
         """
         v_link_info, p_link_info = v_net.links[v_link_pair], p_net.links[p_link_pair]
         final_result, link_satisfiability_info = self.check_constraint_satisfiability(v_link_info, p_link_info, self.link_constraint_attrs_checking_at_link)
+        from virne.reliability.live_failures import link_operational
+        final_result = final_result and link_operational(p_net, *p_link_pair)
         return final_result, link_satisfiability_info
 
     def check_path_level_constraints(self, v_net, p_net, v_link, p_path):

@@ -18,6 +18,36 @@ is a confidence interval. Paired differences average models within each evaluati
 subtracting methods. All long-format observations remain available.'''
 
 
+def result_interpretations(observations):
+    """Evidence-bound descriptions; never infer causes or significance from a rank."""
+    result=[]
+    if observations.empty or 'method' not in observations:return result
+    for method,group in observations.groupby('method',sort=False):
+        facts=[]
+        if {'success_count','v_net_count','sla_service_rate_all_arrivals'}<=set(group.columns):
+            admitted=int(group.success_count.sum());arrivals=int(group.v_net_count.sum())
+            compliant=round((group.sla_service_rate_all_arrivals*group.v_net_count).sum())
+            facts.append(f'Across recorded evaluation runs: {admitted}/{arrivals} requests accepted; '
+                         f'{compliant} predicted SLA compliant; {admitted-compliant} accepted below predicted SLA. '
+                         'These counts are not independent training replications.')
+        if 'mean_sla_shortfall' in group and group.mean_sla_shortfall.notna().any():
+            facts.append(f'Mean normalized shortfall across runs: {group.mean_sla_shortfall.mean():.6g}. '
+                         'Shortfall measures severity relative to the SLA unavailability budget, not a percentage of violations. '
+                         'A zero median does not imply no violations.')
+        if 'observed_service_availability' in group:
+            admitted_time=group.admitted_service_time.sum()
+            downtime=group.total_service_downtime.sum()
+            if admitted_time>0:
+                facts.append(f'Observed downtime: {downtime:.6g} of {admitted_time:.6g} admitted service-time units. '
+                             'Observed availability uses full service lifetimes; predicted availability is a steady-state model estimate.')
+            else:facts.append('No admitted service-time: conditional observed availability is undefined.')
+            if 'component_failure_count' in group and group.component_failure_count.eq(0).all():
+                facts.append('No component failure transitions occurred: this run does not establish resilience to realized outages; initial component states are recorded in the trace.')
+        facts.append('No causal explanation, convergence, or statistical superiority is inferred from these summaries alone.')
+        result.append({'method':method,'interpretation':' '.join(facts)})
+    return result
+
+
 def run(bundle,resolved,summary,manifest,validation):
     bundle=Path(bundle);out=bundle/'reports'
     render_html(bundle,resolved,summary,manifest,validation)
@@ -55,6 +85,10 @@ def run(bundle,resolved,summary,manifest,validation):
           'Weibull/history assumptions are provisional; no exact Paper-9 reproduction or scientific superiority is claimed. '
           'One training epoch cannot establish convergence.\n\n'
           '## Figures\n\n'+''.join(f'- [{p.name}](../plots/{p.name})\n' for p in plots if p.suffix in ('.png','.pdf')))
+    interpretations=result_interpretations(read_csv(bundle/'aggregated/results_long.csv'))
+    text+='\n## Interpretation of finalized results\n\n'+''.join('### '+r['method']+'\n\n'+r['interpretation']+'\n\n' for r in interpretations)
+    text+='Predicted SLA compliance and empirical uptime are separate measurements. Request rejections are not component failures. '
+    text+='Live evaluation, when enabled, retains reservations and waits for repair; it performs no retraining or automatic rerouting.\n'
     if resolved['experiment']['reporting']['generate_markdown_report']:(out/'experiment_report.md').write_text(text)
     write_json(out/'experiment_report.json',{'hardware':hardware,'execution_summary':summary,'resolved_config':resolved,
                'manifest':manifest,'validation':validation,'statistics_semantics':STATS,'results':frame.to_dict('records')})
@@ -149,7 +183,25 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
         return '<h3>Finalized per-run observations</h3>'+table(observations[columns]) if columns else ''
     section(5,'Economic Evaluation',metric_table(['acceptance','r2c','revenue','cost'])+
         finalized_runs(['revenue','cost'])+images([p for p in figures if any(k in p.name for k in ('acceptance','r2c'))]))
-    section(6,'Reliability / SLA Evaluation',metric_table(['availability','sla','compliance'])+images([p for p in figures if any(k in p.name for k in ('availability','sla'))]))
+    observations=read_csv(bundle/'aggregated/results_long.csv')
+    interpretation_frame=pd.DataFrame(result_interpretations(observations))
+    live=resolved['experiment']['protocol']['evaluation'].get('live_failures',{}).get('enabled',False)
+    live_body=''
+    if live:
+        live_body=('<h3>Observed service delivery under live failures</h3>'+
+                   '<p>Frozen policy evaluation; reservations retained during outages; wait for repair; '
+                   'no rerouting or replication. Component transitions precede workload events at the same time. '
+                   'All original departures are included. Observed availability is weighted by admitted service-time; '
+                   'fulfilled service-time includes rejected requests in the denominator.</p>'+
+                   dump(resolved['experiment']['protocol']['evaluation']['live_failures'])+
+                   metric_table(['observed','fulfilled','downtime','interrupted','component_failure','component_repair'])+
+                   finalized_runs(['observed','fulfilled','downtime','interrupted','component_failure','component_repair']))
+    section(6,'Reliability / SLA Evaluation',
+        '<p>Predicted availability is analytic steady-state availability, not measured uptime. '
+        'Conditional SLA metrics use accepted requests; all-arrival compliant service includes rejections. '
+        'A zero median shortfall can coexist with substantial violations.</p>'+
+        metric_table(['availability','sla','compliance'])+images([p for p in figures if any(k in p.name for k in ('availability','sla'))])+
+        live_body+'<h3>Interpretation of finalized results</h3>'+table(interpretation_frame))
     section(7,'System Metrics',metric_table(['utilization','inservice','consumption','resource'])+
         finalized_runs(['utilization','inservice','consumption','resource'])+
         '<p>Only finalized metrics present in the existing aggregation are shown. Unconfigured metrics are not inferred.</p>')

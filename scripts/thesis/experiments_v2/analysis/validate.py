@@ -17,7 +17,11 @@ def same_frame(actual,expected,name):
 
 
 def fairness_errors(frame):
-    return [f'Exogenous input fingerprint mismatch for evaluation seed {seed}' for seed,g in frame.groupby('eval_seed') if g.input_hash.nunique()!=1]
+    errors=[f'Exogenous input fingerprint mismatch for evaluation seed {seed}' for seed,g in frame.groupby('eval_seed') if g.input_hash.nunique()!=1]
+    if 'failure_trace_sha256' in frame:
+        errors.extend(f'Failure trajectory fingerprint mismatch for evaluation seed {seed}'
+                      for seed,g in frame.groupby('eval_seed') if g.failure_trace_sha256.isna().any() or g.failure_trace_sha256.nunique()!=1)
+    return errors
 
 
 def mode_errors(resolved,job,config,audit):
@@ -31,6 +35,9 @@ def mode_errors(resolved,job,config,audit):
         errors.append(f'{job["run_id"]}: runtime did not complete solver.learn')
     if job['phase']=='eval' and (audit.get('training_requested') or audit.get('optimizer_updates',0)):
         errors.append(f'{job["run_id"]}: runtime trained during evaluation')
+    expected_live=job['phase']=='eval' and resolved['experiment']['protocol']['evaluation'].get('live_failures',{}).get('enabled',False)
+    if bool(config.get('live_failures',{}).get('enabled',False))!=expected_live:
+        errors.append(f'{job["run_id"]}: live failure mode differs from planned evaluation')
     return errors
 
 

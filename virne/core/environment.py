@@ -81,6 +81,7 @@ class BaseEnvironment:
         if bool(self.config.solver.get('reusable', False)):
             raise NotImplementedError('reusable=true is not supported by the environment')
         self._refresh_v_net_index()
+        self._live_failures = None
 
     def _refresh_v_net_index(self) -> None:
         """Index virtual networks by their external IDs without assuming contiguity."""
@@ -104,6 +105,11 @@ class BaseEnvironment:
         event_position = int(event_id)
         self.curr_event_pos = event_position
         self.curr_event = self.v_net_simulator.events[event_position]
+        if self._live_failures is not None:
+            # Rollbacks replace the graph object, but retain its resource ledger
+            # and operational flags at the current (atomic) placement time.
+            self._live_failures.p_net = self.p_net
+            self._live_failures.advance(self.curr_event['time'])
         self.num_processed_v_nets += 1
         if self._indexed_v_nets_identity != id(self.v_net_simulator.v_nets):
             self._refresh_v_net_index()
@@ -156,6 +162,12 @@ class BaseEnvironment:
         self._refresh_v_net_index()
         from virne.reliability.provenance import capture_inputs
         capture_inputs(self.config, self.p_net, self.v_net_simulator)
+        settings = self.config.get('live_failures', {})
+        self._live_failures = None
+        if settings.get('enabled', False):
+            from virne.reliability.live_failures import LiveFailureProcess
+            self._live_failures = LiveFailureProcess(
+                self.p_net, self.v_net_simulator, self.config, settings, effective_seed)
         self.cumulative_reward: float = 0
         self.num_processed_v_nets: int = 0
         self.start_run_time: float = time.time()
@@ -457,6 +469,12 @@ class BaseEnvironment:
         """
         record = self.recorder.count(self.v_net, self.p_net, self.solution)
         record = self.add_record(record, extra_info)
+        if self._live_failures is not None:
+            self._live_failures.p_net = self.p_net
+            if self.curr_event['type'] == 1:
+                self._live_failures.arrival(self.v_net, self.solution)
+            else:
+                self._live_failures.departure(self.v_net)
         return record
 
     def display_record(
@@ -497,6 +515,8 @@ class BaseEnvironment:
         if record_file_name is None:
             record_file_name = f'{self.solver_name}-{self.run_id}-{start_run_time}.csv'
         summary_info = self.recorder.summary_records(self.recorder.memory)
+        if self._live_failures is not None:
+            summary_info.update(self._live_failures.save(self.recorder.summary_dir))
         end_run_time = time.time()
         clock_running_time = end_run_time - self.start_run_time
         run_info_dict: Dict[str, Any] = {
@@ -546,6 +566,15 @@ class SolutionStepEnvironment(BaseEnvironment):
         self.solution = solution
         if solution['result']:
             self._validate_solution_contract(solution)
+            from virne.reliability.live_failures import mapping_operational, node_operational
+            if not mapping_operational(self.p_net, solution):
+                solution['result'] = False
+                if not all(node_operational(self.p_net, n) for n in solution['node_slots'].values()):
+                    solution['place_result'] = False
+                    solution['failure_reason'] = 'place'
+                else:
+                    solution['route_result'] = False
+                    solution['failure_reason'] = 'route'
         self.counter.count_solution(self.v_net, self.solution)
         failure_reason = None
         # Check System Constraints

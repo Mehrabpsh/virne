@@ -40,6 +40,13 @@ system:
   if_time_window: false
   time_window_size: 100
 
+# Evaluation-only chronological outages; analytic training remains unchanged.
+live_failures:
+  enabled: false
+  seed_offset: 1000003
+  initial_state: all_up  # alternatively stationary; recorded with every result
+  event_limit: 1000000  # abort rather than silently truncate a trajectory
+
 # For VNE Solver
 solver:
   solver_name: 'ppo_dual_gat+'

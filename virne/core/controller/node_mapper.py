@@ -68,6 +68,9 @@ class NodeMapper:
                                 The keys of the dictionary are the names of the node-level constraints,
                                 and the values are boolean values indicating whether the constraint is satisfied.
         """
+        from virne.reliability.live_failures import node_operational
+        if not node_operational(p_net, p_node_id):
+            return False, {attr.name: 0.0 for attr in self.node_resource_attrs}
         if not if_allow_constraint_violation:
             check_result, check_info = self._safely_place(v_net, p_net, v_node_id, p_node_id, solution)
         else:
@@ -284,7 +287,7 @@ class NodeMapper:
 
         try:
             for v_node_id, p_node_id in candidate_pairs:
-                self.place(
+                placed, _ = self.place(
                     v_net,
                     p_net,
                     v_node_id,
@@ -292,6 +295,10 @@ class NodeMapper:
                     solution,
                     if_allow_constraint_violation=True,
                 )
+                if not placed:
+                    self._rollback_node_mapping(p_net, solution, placed_v_nodes)
+                    solution.update({'place_result': False, 'result': False})
+                    return False
                 placed_v_nodes.append(v_node_id)
         except Exception:
             self._rollback_node_mapping(p_net, solution, placed_v_nodes)

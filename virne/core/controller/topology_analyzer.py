@@ -52,6 +52,8 @@ class TopologyAnalyzer:
         Returns:
             shortest_paths (list): The list of shortest paths.
         """
+        from virne.reliability.live_failures import operational_view
+        p_net = operational_view(p_net)
         source, target = p_pair
         assert method in [
             'first_shortest',

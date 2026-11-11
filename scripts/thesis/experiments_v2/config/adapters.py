@@ -6,7 +6,7 @@ from omegaconf import OmegaConf
 from .schema import ConfigError, get_path, keys, positive, require, set_path
 
 PROTECTED=('p_net_setting','v_sim_setting','reliability','sla')
-OWNED=('experiment','simulation','hydra','system','solver.solver_name','solver.pretrained_model_path',
+OWNED=('experiment','simulation','hydra','system','live_failures','solver.solver_name','solver.pretrained_model_path',
        'solver.pretrained_subsolver_model_path','training.num_train_epochs','training.seed','training.use_cuda',
        'training.num_workers','training.if_use_random_training_seed','training.distributed_training',
        'training.save_interval','training.eval_interval','training.model_dir_name','recorder','logger')

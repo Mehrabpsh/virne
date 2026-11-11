@@ -71,6 +71,10 @@ def final_config(resolved,job,bundle,selected_device):
     root=(Path(bundle)/job['relative_output_root']).resolve()
     config['experiment'].update(seed=job['seed'],run_id=job['run_id'],save_root_dir=str(root))
     config['system']['if_offline_system']=system_mode(resolved,job['phase'])=='OfflineSystem'
+    if job['phase']=='eval':
+        config['live_failures']=copy.deepcopy(resolved['experiment']['protocol']['evaluation'].get('live_failures',{'enabled':False}))
+    else:
+        config['live_failures']['enabled']=False
     config['logger']['runtime_audit_path']=str((Path(bundle)/job['relative_directory']/'runtime_system.json').resolve())
     tb=resolved['experiment']['runtime'].get('tensorboard',{})
     config['logger']['tensorboard_dir']=str(tensorboard_path(bundle,job)) if tb.get('enabled',False) else None

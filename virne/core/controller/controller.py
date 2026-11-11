@@ -307,6 +307,9 @@ class Controller:
         """
         if not solution['result']:
             return False
+        from virne.reliability.live_failures import mapping_operational
+        if p_net.graph.get('_live_failures_enabled', False) and not mapping_operational(p_net, solution):
+            return False
         applied_updates = []
         try:
             for (v_node_id, p_node_id), used_node_resources in solution['node_slots_info'].items():
@@ -598,7 +601,8 @@ class Controller:
         if v_node_id not in v_net.nodes:
             raise KeyError(f'Unknown virtual node ID: {v_node_id!r}')
 
-        all_p_nodes = list(p_net.nodes)
+        from virne.reliability.live_failures import node_operational
+        all_p_nodes = [n for n in p_net.nodes if node_operational(p_net, n)]
         filtered_nodes = set(filter or [])
         if check_node_constraint:
             candidate_nodes = [

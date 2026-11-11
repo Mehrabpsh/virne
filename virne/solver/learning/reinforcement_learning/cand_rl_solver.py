@@ -44,14 +44,17 @@ class CandidateSelector:
         destination = v_net.graph.get('destination', self.settings.destination)
         if current not in p_net or destination not in p_net:
             raise ValueError('Cand endpoint absent from substrate')
+        from virne.reliability.live_failures import node_operational, link_operational
+        if not node_operational(p_net, current) or not node_operational(p_net, destination):
+            return []
         current_v_node = env.curr_v_node_id
         requirements = {attr.name: max((v_net.edges[edge][attr.name]
                             for edge in v_net.edges(current_v_node)), default=0.)
                         for attr in v_net.get_link_attrs(['resource'])}
         graph = nx.Graph()
-        graph.add_nodes_from(p_net.nodes)
+        graph.add_nodes_from(n for n in p_net.nodes if node_operational(p_net, n))
         for source, target, data in p_net.edges(data=True):
-            if all(data[name] >= demand for name, demand in requirements.items()):
+            if link_operational(p_net, source, target) and all(data[name] >= demand for name, demand in requirements.items()):
                 if self.settings.distance_weight == 'delay':
                     delay = data.get('delay')
                     if delay is None or not math.isfinite(delay) or delay < 0:

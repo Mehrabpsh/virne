@@ -20,6 +20,12 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
     protocol=data.get('protocol',{}) if isinstance(data,dict) else {}
     training=protocol.get('training',{}) if isinstance(protocol,dict) else {}
     if isinstance(training,dict):training.setdefault('online',False)
+    evaluation=protocol.get('evaluation',{}) if isinstance(protocol,dict) else {}
+    if isinstance(evaluation,dict):
+        evaluation.setdefault('live_failures',{})
+        if isinstance(evaluation['live_failures'],dict):
+            for key,value in {'enabled':False,'seed_offset':1000003,'initial_state':'all_up','event_limit':1000000}.items():
+                evaluation['live_failures'].setdefault(key,value)
     runtime=data.get('runtime',{}) if isinstance(data,dict) else {}
     if isinstance(runtime,dict):runtime.setdefault('tensorboard',{})
     if isinstance(runtime,dict) and isinstance(runtime['tensorboard'],dict):
@@ -30,6 +36,9 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
     validate(data)
     from .metrics import validate_metrics
     validate_metrics(data['metrics'])
+    from virne.reliability.live_failures import LIVE_METRICS
+    require(data['protocol']['evaluation']['live_failures']['enabled'] or not set(data['metrics']).intersection(LIVE_METRICS),
+            'Observed failure metrics require protocol.evaluation.live_failures.enabled=true')
     selected=[name for name,m in data['methods'].items() if m['enabled']]
     if subset is not None:
         requested=subset.split(',') if isinstance(subset,str) else list(subset)

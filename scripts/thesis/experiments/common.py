@@ -255,6 +255,48 @@ def collect_row(row, bundle, *, assessment_beta=None, assessment_mode=None):
         for level,group in arrivals.loc[arrivals.result.astype(str).str.lower()=='true'].groupby('availability_requirement')}))
     metrics['delivered_availability_distribution_json']=json.dumps(clean(accepted.delivered_availability.describe().to_dict())) if 'delivered_availability' in accepted else '{}'
     metrics['v_net_count']=len(arrivals)
+    if cfg.get('live_failures',{}).get('enabled',False):
+        from virne.reliability.live_failures import LiveFailureProcess
+        # Independently regenerate and advance the component clock while checking
+        # actual runtime arrival mappings. This audits, rather than launches, jobs.
+        process=LiveFailureProcess(pn,sim,cfg,cfg.live_failures,int(cfg.experiment.seed))
+        raw=json.loads((directory/'live_failure_summary.json').read_text())
+        trace=json.loads((directory/'live_failure_trace.json').read_text())
+        if process.trace_hash!=raw['failure_trace_sha256'] or trace['trace_sha256']!=process.trace_hash:
+            raise ValueError('Live component trajectories differ from deterministic regeneration')
+        actual_trace_hash=hashlib.sha256(json.dumps({key:trace[key] for key in ('components','events','horizon')},
+                                                    sort_keys=True,allow_nan=False).encode()).hexdigest()
+        if actual_trace_hash!=process.trace_hash:
+            raise ValueError('Archived live component trajectory was modified')
+        by_id={int(r.v_net_id):r for _,r in arrivals.iterrows()}
+        for event in sim.events:
+            process.advance(event['time'])
+            v=expected[event['v_net_id']]
+            if event['type']==1:
+                r=by_id[int(v.id)]
+                solution={'result':str(r.result).lower()=='true',**{k:ast.literal_eval(r[k]) for k in ('node_slots','link_paths')}}
+                process.arrival(v,solution)
+            else:process.departure(v)
+        regenerated=process.summary()
+        observed=pd.read_csv(directory/'observed_services.csv')
+        if len(observed)!=len(process.services) or observed.v_net_id.duplicated().any():
+            raise ValueError('Observed service records do not cover every arrival exactly once')
+        observed=observed.set_index('v_net_id')
+        if set(observed.index)!=set(process.services):raise ValueError('Observed service IDs differ')
+        for key,service in process.services.items():
+            for field in ('downtime','interruptions'):
+                if not np.isclose(observed.loc[key,field],service[field],rtol=1e-10,atol=1e-10):
+                    raise ValueError('Observed per-service accounting differs: '+field)
+        from virne.reliability.live_failures import LIVE_METRICS
+        for key in LIVE_METRICS:
+            value=regenerated[key]
+            if value is None:
+                if raw.get(key) is not None:raise ValueError('Invalid missing conditional live metric: '+key)
+            elif not np.isclose(value,raw[key],rtol=1e-10,atol=1e-10):
+                raise ValueError('Live service-time accounting mismatch: '+key)
+        metrics.update({key:raw[key] for key in LIVE_METRICS})
+        metrics.update(live_failures_enabled=True,failure_trace_sha256=process.trace_hash,
+                       observed_class_metrics_json=json.dumps(raw['observed_class_metrics'],sort_keys=True))
     metrics.update(row)
     metrics.update(records=str(paths[-1]),runtime=float((directory/'runtime_seconds.txt').read_text()),
                    reliability_enabled=bool(cfg.reliability.enabled),reliability_mode=cfg.reliability.mode,
