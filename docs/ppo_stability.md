@@ -63,6 +63,7 @@ rl:
     max_backtracks: 4
     backtrack_factor: 0.5
     rollout_logprob_atol: 0.001
+    rollout_distribution_kl_atol: 0.000001
 ```
 
 The actor learning rate and KL target are provisional stability settings, not
@@ -123,3 +124,37 @@ This plans six training jobs,18 failure-free evaluations and18 live evaluations
 (42 jobs). Removing `--dry-run` launches that experiment. No such GPU experiment
 was launched during the local diagnosis. Check accepted updates, policy hashes,
 maximum accepted KL and validation outcomes before interpreting performance.
+
+## November 13 three-epoch GPU run
+
+The first GPU follow-up used three epochs despite its `ppo_stability_5epochs`
+experiment label. Original PPO seed 31 completed 9,508 accepted updates with
+maximum accepted rollout mean KL 0.01999821. Seed 37 logged 9,818 accepted
+updates before the pre-update consistency check stopped its third epoch:
+stored-versus-batched action log-probability error was 0.00119352, above 0.001.
+Seed 43, reliability-aware PPO and all held-out evaluations were not reached.
+This failed bundle cannot establish comparative evaluation performance.
+
+The archived epoch-1 seed-37 checkpoint has finite parameters. A frozen CPU
+probe collected 202 observations over 32 requests without optimizer updates;
+its largest single-versus-batched action log-probability difference was
+0.0000552535. It did not reproduce the exact CUDA failure. The original archive
+contains no exact failing rollout or failure-time policy state, so the cause of
+that particular mismatch remains unconfirmed.
+
+The guard now distinguishes a collection-path mismatch from batch-dependent
+roundoff. If the initial check fails, it replays every observation individually,
+using the same forward shape as collection. It proceeds only if stored action
+log probabilities pass the original 0.001 tolerance AND the maximum per-state
+KL(single||batch), over complete masked action distributions, is at most
+`rollout_distribution_kl_atol` (default 1e-6). The replayed distributions become
+the fixed old-policy reference. The optimizer acceptance target stays 0.02.
+This is a bounded numerical allowance, not automatic acceptance of every batch
+mismatch. Recheck counts and maximum batching discrepancy enter runtime audits.
+
+Unresolved mismatches still abort. They save `logs/ppo_rollout_mismatch.pt` and
+an accompanying JSON diagnostic with the failure-time policy/optimizer state,
+observations, actions, stored/replayed distributions and precision metadata.
+Failed training now also finalizes runtime update counts, policy hashes and
+guard statistics instead of retaining the initialization-time zero-update audit.
+GPU validation of this new verification path is still required.

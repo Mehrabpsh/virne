@@ -570,7 +570,8 @@ class PPOSolver(RLSolver):
         from .ppo_stability import validate_settings
         validate_settings(self.config)
         self.ppo_guard_stats={'accepted_updates':0,'rejected_proposals':0,'skipped_batches':0,
-                              'max_accepted_exact_kl':0.}
+                              'max_accepted_exact_kl':0.,'rollout_single_rechecks':0,
+                              'max_rollout_batched_logprob_error':0.,'max_rollout_batching_state_kl':0.}
 
     def calculate_kl_divergence(self, old_observations, old_policy):
         actions_logits = self.policy.act(old_observations)
@@ -601,7 +602,14 @@ class PPOSolver(RLSolver):
         if self.config.rl.get('kl_guard',{}).get('enabled',False):
             from .ppo_stability import PPOUpdateGuard
             guard=PPOUpdateGuard(self,self.preprocess_obs(self.buffer.observations,self.device),
-                                 batch_actions.to(self.device),batch_old_action_logprobs.to(self.device))
+                                 batch_actions.to(self.device),batch_old_action_logprobs.to(self.device),
+                                 raw_observations=self.buffer.observations)
+            stats=self.ppo_guard_stats
+            stats['rollout_single_rechecks']+=int(guard.consistency['single_recheck'])
+            stats['max_rollout_batched_logprob_error']=max(stats['max_rollout_batched_logprob_error'],
+                guard.consistency['batched_logprob_max_error'])
+            stats['max_rollout_batching_state_kl']=max(stats['max_rollout_batching_state_kl'],
+                guard.consistency['batching_max_state_kl'] or 0.)
         self.ppo_update_diagnostics=[] if guard is None else guard.diagnostics
         sample_times = self.calculate_update_sample_times()
         for i in range(sample_times):

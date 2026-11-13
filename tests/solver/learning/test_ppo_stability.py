@@ -103,9 +103,81 @@ def test_guard_reference_does_not_reset_between_minibatches():
 def test_stale_rollout_logprob_fails_before_updating():
     solver,obs,actions,old=fixture()
     before=solver.policy.logits.detach().clone()
-    with pytest.raises(ValueError,match='before any optimizer step'):
+    with pytest.raises(ValueError,match='before this rollout'):
         PPOUpdateGuard(solver,obs,actions,old+1)
     torch.testing.assert_close(solver.policy.logits,before,rtol=0,atol=0)
+    assert not solver.optimizer.state
+
+
+def batching_fixture(bias=.002):
+    solver,obs,actions,old=fixture()
+    act=solver.policy.act
+    def batched_act(observation):
+        logits=act(observation)
+        # Simulate a batch-size-dependent floating-point difference, without
+        # changing policy weights or any collected observation.
+        if len(observation['action_mask'])>1:
+            logits=logits+torch.tensor([[bias,0.,0.]])
+        return logits
+    solver.policy.act=batched_act
+    raw=[{'action_mask':mask.unsqueeze(0)} for mask in obs['action_mask']]
+    solver.preprocess_obs=lambda observation,device:observation
+    return solver,obs,actions,old,raw
+
+
+def test_batch_roundoff_is_verified_with_collection_path_and_full_distribution():
+    solver,obs,actions,old,raw=batching_fixture()
+    with pytest.warns(RuntimeWarning,match='single-observation replay'):
+        guard=PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw)
+    check=guard.consistency
+    assert check['batched_logprob_max_error']>.001
+    assert check['single_logprob_max_error']<1e-7
+    assert check['batching_max_state_kl']<=1e-6
+    torch.testing.assert_close(guard.reference.log_prob(actions),old)
+    _,decision=guard.step(clipped_actor_loss(solver,obs,actions,old))
+    assert decision['exact_kl']<=.02
+
+
+def test_replay_does_not_excuse_stale_rollout_data_and_saves_exact_failure(tmp_path):
+    solver,obs,actions,old,raw=batching_fixture()
+    solver.log_dir=str(tmp_path)
+    solver.update_time=17
+    model=copy.deepcopy(solver.policy.state_dict())
+    with pytest.raises(ValueError,match='before this rollout'):
+        PPOUpdateGuard(solver,obs,actions,old+.1,raw_observations=raw)
+    snapshot=torch.load(tmp_path/'ppo_rollout_mismatch.pt',weights_only=True)
+    assert snapshot['update_time']==17
+    assert snapshot['consistency']['single_logprob_max_error']>.001
+    assert_state_equal(snapshot['policy'],model)
+    assert_state_equal(solver.policy.state_dict(),model)
+    assert not solver.optimizer.state
+
+
+def test_material_batch_distribution_change_still_fails_even_when_replay_matches():
+    solver,obs,actions,old,raw=batching_fixture(bias=.02)
+    with pytest.raises(ValueError,match='before this rollout'):
+        PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw)
+    assert not solver.optimizer.state
+
+
+def test_replay_checks_unselected_actions_too():
+    solver,obs,actions,old,raw=batching_fixture()
+    # Collected action 0 has exactly the same probability, but probability
+    # moves substantially between the two other valid actions. Comparing
+    # selected-action log probabilities alone would miss that change.
+    obs['action_mask'][:]=True
+    for item in raw:item['action_mask'][:]=True
+    solver.policy.act=lambda item:torch.log(torch.tensor(
+        [[.2,.79,.01]] if len(item['action_mask'])==1 else [[.2,.01,.79]]
+    )).expand(len(item['action_mask']),-1)
+    actions=torch.tensor([0,0])
+    # Force a tiny selected-action mismatch to trigger the collection replay.
+    old=torch.full((2,),float(torch.log(torch.tensor(.2))))
+    act=solver.policy.act
+    solver.policy.act=lambda item:act(item)+(torch.tensor([[.002,0.,0.]])
+        if len(item['action_mask'])>1 else 0.)
+    with pytest.raises(ValueError,match='before this rollout'):
+        PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw)
     assert not solver.optimizer.state
 
 
@@ -125,6 +197,7 @@ def test_nonfinite_gradient_cannot_commit_an_optimizer_step(clip):
 @pytest.mark.parametrize('path,value',[('rl.target_kl',None),('rl.target_kl',-1),
     ('rl.kl_guard.max_backtracks',-1),('rl.kl_guard.backtrack_factor',1.),
     ('rl.kl_guard.rollout_logprob_atol',-1.),('nn.batch_norm',True),
+    ('rl.kl_guard.rollout_distribution_kl_atol',-1.),
     ('nn.dropout_prob',.5),('training.distributed_training',True)])
 def test_invalid_guard_settings_fail_early(path,value):
     solver,_,_,_=fixture()

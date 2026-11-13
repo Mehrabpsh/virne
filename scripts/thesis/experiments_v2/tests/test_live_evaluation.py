@@ -176,6 +176,34 @@ def test_guarded_native_training_records_real_accepted_steps(tmp_path,method):
     finally:system.logger.close()
 
 
+def test_failed_native_training_preserves_completed_updates_and_guard_audit(tmp_path):
+    import torch
+    from virne.system import BaseSystem
+    from virne.utils.config import add_simulation_into_config
+    torch.set_num_threads(1)
+    r=resolve(EXAMPLE,['protocol.training.online=true','protocol.training.epochs=2',
+                      'environment.workload.num_requests=6','environment.workload.arrival_rate=0.2'],
+              ['rl.kl_guard.enabled=true','rl.target_kl=0.02'],subset='original_ppo')[0]
+    train=next(j for j in jobs(r) if j['phase']=='train')
+    cfg=OmegaConf.create(final_config(r,train,tmp_path,'cpu'))
+    add_simulation_into_config(cfg)
+    system=BaseSystem.from_config(cfg)
+    update=system.solver.update
+    def fail_after_update():
+        update()
+        raise RuntimeError('injected failure after real accepted updates')
+    system.solver.update=fail_after_update
+    try:
+        with pytest.raises(RuntimeError,match='injected failure'):
+            system.run()
+        audit=json.loads(Path(cfg.logger.runtime_audit_path).read_text())
+        assert audit['training_completed'] is False
+        assert audit['optimizer_updates']==audit['ppo_stability']['accepted_updates']>0
+        assert audit['policy_sha256_before']!=audit['policy_sha256_after']
+        assert audit['training_error']['type']=='RuntimeError'
+    finally:system.logger.close()
+
+
 @pytest.mark.parametrize('method', ['original_ppo','reliability_ppo','cand_rl'])
 def test_trained_policy_is_frozen_in_live_evaluation(tmp_path, method):
     import torch
