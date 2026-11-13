@@ -59,11 +59,15 @@ def execute(resolved,original,plan,output=None,run_tests=False):
         stage(bundle,'report',lambda:report.run(bundle,resolved,plan,manifest,validation))
         reporting=resolved['experiment']['reporting']
         required=['reports/experiment_report.html','reports/experiment_report.json','reports/validation_report.json','aggregated/results_long.csv',
-                  'aggregated/results_by_train_seed.csv','aggregated/results_summary.csv','aggregated/results_summary.json']
+                  'aggregated/results_by_train_seed.csv','aggregated/results_summary.csv','aggregated/results_summary.json',
+                  'aggregated/paired_evaluation_modes.csv']
         if reporting['generate_markdown_report']:required.append('reports/experiment_report.md')
         if reporting['plots']:
-            for metric in resolved['experiment']['metrics']+['sla_class_breakdown']:
-                required.extend(f'plots/{metric}.{fmt}' for fmt in reporting['formats'])
+            from scripts.thesis.experiments_v2.analysis.aggregate import mode_metrics
+            modes=list(dict.fromkeys(j['evaluation_mode'] for j in plan['jobs'] if j['phase']=='eval'))
+            for mode in modes:
+                for metric in mode_metrics(resolved['experiment']['metrics'],mode)+['sla_class_breakdown']:
+                    required.extend(f'plots/{mode}__{metric}.{fmt}' for fmt in reporting['formats'])
         for file in required:
             if not (bundle/file).is_file():raise FileNotFoundError(bundle/file)
         write_json(bundle/'completion.json',{'passed':True,'jobs':len(manifest),'runtime_seconds':time.monotonic()-start,

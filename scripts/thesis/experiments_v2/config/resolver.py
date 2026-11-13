@@ -37,8 +37,8 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
     from .metrics import validate_metrics
     validate_metrics(data['metrics'])
     from virne.reliability.live_failures import LIVE_METRICS
-    require(data['protocol']['evaluation']['live_failures']['enabled'] or not set(data['metrics']).intersection(LIVE_METRICS),
-            'Observed failure metrics require protocol.evaluation.live_failures.enabled=true')
+    unmeasured_live_metrics=(not data['protocol']['evaluation']['live_failures']['enabled']
+                             and bool(set(data['metrics']).intersection(LIVE_METRICS)))
     selected=[name for name,m in data['methods'].items() if m['enabled']]
     if subset is not None:
         requested=subset.split(',') if isinstance(subset,str) else list(subset)
@@ -61,6 +61,8 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
     for key,value in raw:
         if under(key,('p_net_setting','v_sim_setting','reliability','sla')):put(method_common,key,value)
     methods={};warnings=[]
+    if unmeasured_live_metrics:
+        warnings.append('Live failure evaluation disabled: configured observed outage metrics remain unmeasured/null; only failure-free evaluation runs.')
     from virne.reliability.diagnostics import configured_upper_bound
     bound=configured_upper_bound(expected_contract['reliability'],expected_contract['v_sim_setting']['v_net_size']['low'])
     impossible=[level for level in expected_contract['sla']['levels'] if level>bound]

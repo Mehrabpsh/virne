@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scripts.thesis.experiments.plot_results import training_plots
-from .aggregate import tables
+from .aggregate import mode_groups, mode_metrics
 
 
 def run(bundle,resolved):
@@ -31,23 +31,29 @@ def run(bundle,resolved):
             mask=valid & error.notna()
             if mask.any():ax.errorbar(x[mask]+offset,mean[mask],yerr=error[mask],fmt='none',ecolor=color,capsize=3,label=label)
         ax.set_xticks(x,stats.label,rotation=40,ha='right');ax.set_ylabel(metric.replace('_',' '))
-        ax.set_title('Preliminary pipeline validation');ax.grid(axis='y',alpha=.2);ax.set_axisbelow(True)
+        mode=stats.evaluation_mode.iloc[0] if 'evaluation_mode' in stats else 'legacy'
+        ax.set_title('Preliminary pipeline validation: '+mode);ax.grid(axis='y',alpha=.2);ax.set_axisbelow(True)
         if ax.get_legend_handles_labels()[0]:ax.legend(fontsize=8)
         save(fig,name)
-    for metric in exp['metrics']:bars(summary,metric,metric)
+    for mode,stats in mode_groups(summary):
+        prefix=mode+'__' if mode is not None else ''
+        for metric in mode_metrics(exp['metrics'],mode):bars(stats,metric,prefix+metric)
     rows=[]
     for _,r in frame.iterrows():
         for level,values in json.loads(r.sla_class_metrics_json).items():
-            rows.append({'method':r.method,'label':r.label,'category':r.category,'train_seed':r.train_seed,
+            rows.append({**({'evaluation_mode':r.evaluation_mode} if 'evaluation_mode' in frame else {}),
+                         'method':r.method,'label':r.label,'category':r.category,'train_seed':r.train_seed,
                          'eval_seed':r.eval_seed,'level':float(level),**values})
     classes=pd.DataFrame(rows);classes.to_csv(out/'sla_class_metrics.csv',index=False)
-    fig,ax=plt.subplots(figsize=(11,6))
-    if len(classes):
-        for method,group in classes.groupby('method',sort=False):
-            rates=group.groupby(['level','eval_seed']).sla_satisfaction_rate.mean().groupby('level').agg(['mean','std'])
-            ax.errorbar([str(v) for v in rates.index],rates['mean'],yerr=rates['std'].fillna(0),marker='o',capsize=2,label=group.iloc[0].label)
-    ax.set(xlabel='SLA requirement',ylabel='Accepted-service satisfaction',title='Preliminary SLA classes; scenario SD after averaging training seeds')
-    ax.legend(fontsize=8,bbox_to_anchor=(1.01,1));ax.grid(alpha=.2);save(fig,'sla_class_breakdown')
+    for mode,subset in mode_groups(classes):
+        fig,ax=plt.subplots(figsize=(11,6))
+        if len(subset):
+            for method,group in subset.groupby('method',sort=False):
+                rates=group.groupby(['level','eval_seed']).sla_satisfaction_rate.mean().groupby('level').agg(['mean','std'])
+                ax.errorbar([str(v) for v in rates.index],rates['mean'],yerr=rates['std'].fillna(0),marker='o',capsize=2,label=group.iloc[0].label)
+        ax.set(xlabel='SLA requirement',ylabel='Accepted-service satisfaction',title=f'{mode or "Legacy"}: predicted SLA; scenario SD after averaging models')
+        ax.legend(fontsize=8,bbox_to_anchor=(1.01,1));ax.grid(alpha=.2)
+        save(fig,(mode+'__' if mode is not None else '')+'sla_class_breakdown')
     methods={name:(m['solver'],m['label'],m['capabilities']['kind']) for name,m in resolved['selected_methods'].items()}
     training_plots(bundle,methods,save)
     # Visualization of the native writer's existing diagnostics only.

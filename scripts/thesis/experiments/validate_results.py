@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from common import METHODS, METRICS, read_yaml, write_json
+from common import DEFAULT_METHODS as METHODS, METRICS, read_yaml, write_json
 from scripts.thesis.experiments.shared_checks import evaluation_errors, metric_errors
 
 

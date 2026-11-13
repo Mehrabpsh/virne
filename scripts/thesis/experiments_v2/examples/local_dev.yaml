@@ -110,7 +110,7 @@ methods:
     reward: *reward
     ra_heuristic: {normalization: max, combine: weighted_sum, alpha: 0.5}
   ra_evne_a:
-    enabled: true
+    enabled: false
     label: RA-EVNE-A
     solver: ra_evne_a
     kind: auto
@@ -119,7 +119,7 @@ methods:
     reward: *reward
     ra_evne: {cpu_attribute: cpu, bandwidth_attribute: bw, empty_distance: 1}
   ra_evne_original:
-    enabled: true
+    enabled: false
     label: RA-EVNE-original
     solver: ra_evne_original
     kind: auto

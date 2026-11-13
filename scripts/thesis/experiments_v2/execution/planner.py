@@ -29,23 +29,30 @@ def hardware(requested):
 
 def jobs(resolved):
     exp=resolved['experiment'];protocol=exp['protocol'];result=[]
+    modes=['failure_free']
+    if protocol['evaluation'].get('live_failures',{}).get('enabled',False):
+        modes.append('live_failures')
     for method,settings in resolved['selected_methods'].items():
         solver=settings['solver'];learned=settings['capabilities']['kind']=='learned'
         trains=protocol['training']['seeds'] if learned else [None]
         for train in trains:
             if learned:result.append(job(method,solver,'train',train,train))
-            for evaluation in protocol['evaluation']['seeds']:result.append(job(method,solver,'eval',evaluation,train))
+            for evaluation in protocol['evaluation']['seeds']:
+                for mode in modes:result.append(job(method,solver,'eval',evaluation,train,mode))
     # All training precedes evaluation, while keeping method/config identities independent.
     return [r for r in result if r['phase']=='train']+[r for r in result if r['phase']=='eval']
 
 
-def job(method,solver,phase,seed,train_seed):
-    run_id=f'{phase}__{method}__train_{train_seed if train_seed is not None else "none"}__seed_{seed}'
+def job(method,solver,phase,seed,train_seed,evaluation_mode='failure_free'):
+    prefix='eval_live' if phase=='eval' and evaluation_mode=='live_failures' else phase
+    run_id=f'{prefix}__{method}__train_{train_seed if train_seed is not None else "none"}__seed_{seed}'
     section=Path('methods')/method/phase
+    if prefix=='eval_live':section/='live_failures'
     if phase=='eval' and train_seed is not None:section/=f'train_{train_seed}'
     # Preserve the existing launcher and normal Virne <solver>/<run_id> leaves.
     relative=section/solver/run_id
     return {'run_id':run_id,'method':method,'solver':solver,'phase':phase,'seed':seed,
+            'evaluation_mode':evaluation_mode if phase=='eval' else None,
             'train_seed':train_seed,'eval_seed':seed if phase=='eval' else None,
             'test_seed':seed if phase=='eval' else None,'relative_directory':str(relative),
             'relative_output_root':str(section)}
@@ -62,7 +69,9 @@ def summary(resolved,device=None):
             'Evaluation system':system_mode(resolved,'eval'),'tensorboard':exp['runtime'].get('tensorboard',{'enabled':False}),
             'hardware':device,'calibrated_values':exp.get('calibration_result',{}).get('selected',{}),
             'calibrated_overrides':resolved['calibrated_overrides'],'warnings':resolved['warnings']+([device['warning']] if device['warning'] else []),
-            'job_counts':{'training':train,'learned_evaluation':learned_eval,'heuristic_evaluation':len(planned)-train-learned_eval,'total':len(planned)},
+            'job_counts':{'training':train,'learned_evaluation':learned_eval,'heuristic_evaluation':len(planned)-train-learned_eval,
+                          'failure_free_evaluation':sum(j.get('evaluation_mode')=='failure_free' for j in planned),
+                          'live_failure_evaluation':sum(j.get('evaluation_mode')=='live_failures' for j in planned),'total':len(planned)},
             'jobs':planned,'calibration_executed':False}
 
 
@@ -73,6 +82,7 @@ def final_config(resolved,job,bundle,selected_device):
     config['system']['if_offline_system']=system_mode(resolved,job['phase'])=='OfflineSystem'
     if job['phase']=='eval':
         config['live_failures']=copy.deepcopy(resolved['experiment']['protocol']['evaluation'].get('live_failures',{'enabled':False}))
+        config['live_failures']['enabled']=job.get('evaluation_mode','failure_free')=='live_failures'
     else:
         config['live_failures']['enabled']=False
     config['logger']['runtime_audit_path']=str((Path(bundle)/job['relative_directory']/'runtime_system.json').resolve())

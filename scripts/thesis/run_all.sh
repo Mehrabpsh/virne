@@ -102,12 +102,7 @@ for solver in ffd_rank nrm_rank grc_rank rw_rank; do
 done
 job ra_nrm ra_nrm smoke node_only multiplicative joint_terminal 0 false '' ra_heuristic.combine=product ra_heuristic.normalization=max
 job ra_grc ra_grc smoke node_only multiplicative joint_terminal 0 false '' ra_heuristic.combine=weighted_sum ra_heuristic.normalization=max ra_heuristic.alpha=0.5
-evne=(ra_evne.cpu_attribute=cpu ra_evne.bandwidth_attribute=bw ra_evne.empty_distance=1)
-job ra_evne_a ra_evne_a smoke node_only multiplicative joint_terminal 0 false '' "${evne[@]}"
-zeros='[0,0,0,0,0,0,0,0,0,0,0,0]'
-job ra_evne_original ra_evne_original smoke node_only multiplicative joint_terminal 0 false '' "${evne[@]}" \
-    ra_evne.weibull_scale=250000 ra_evne.weibull_shape=1.5 \
-    "ra_evne.ages=$zeros" "ra_evne.failure_counts=$zeros" "ra_evne.last_failure_positions=$zeros"
+# RA-EVNE variants are excluded from the active thesis simulation selection.
 
 # Executable thesis Cand-RL reconstruction; Paper-9 sanity remains blocked.
 cand=(cand_rl.k=3 cand_rl.distance_weight=hops cand_rl.source=0 cand_rl.destination=1
@@ -119,7 +114,7 @@ job cand_test_online cand_rl smoke node_only multiplicative joint_terminal 0 fal
     "$OUTPUT_ROOT/cand_rl/cand_train/models/model.pkl" "${cand[@]}"
 
 step collect_results "$PYTHON" scripts/thesis/collect_results.py "$OUTPUT_ROOT" --output-prefix "$RESULTS_DIR/run_manifest"
-step verify_manifest "$PYTHON" -c 'import json, sys; rows=json.load(open(sys.argv[1])); assert len(rows) == 26, f"Expected 26 runs, found {len(rows)}"; assert all(row["completed"] for row in rows), "Incomplete runs"; print("Verified 26 completed runs")' "$RESULTS_DIR/run_manifest.json"
+step verify_manifest "$PYTHON" -c 'import json, sys; rows=json.load(open(sys.argv[1])); assert len(rows) == 24, f"Expected 24 runs, found {len(rows)}"; assert all(row["completed"] for row in rows), "Incomplete runs"; print("Verified 24 completed runs")' "$RESULTS_DIR/run_manifest.json"
 if ! "$dry_run"; then
     printf 'Completed all steps.\nThese are DEV functional results, not final scientific experiments.\n' > "$RESULTS_DIR/COMPLETE.txt"
 fi

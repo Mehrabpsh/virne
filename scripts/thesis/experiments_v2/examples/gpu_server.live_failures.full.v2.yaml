@@ -1,9 +1,9 @@
-# Full-run proposal: all 11 enabled methods; 9 training + 51 live evaluations.
+# Full-run proposal: 9 methods; 9 training + 45 failure-free + 45 live evaluations.
 # Physical rates/workload/objectives unchanged from gpu_server.calibrated.v2.yaml.
-# This selects live evaluation only; it does not append a failure-free evaluation.
+# Live evaluation is additional; both modes reuse the same frozen checkpoint and workload.
 experiment:
   name: thesis_live_50epochs_full
-  description: 'Full live failure/repair evaluation: analytic training, frozen-policy
+  description: 'Paired failure-free and live failure/repair evaluation: analytic training, frozen-policy
     online evaluation, 3 training seeds and 3 evaluation scenarios. Existing calibrated
     environment and comparator parameters retained; scientific settings remain provisional.'
 runtime:
@@ -316,7 +316,7 @@ methods:
       combine: normalized_risk_weighted_sum
       alpha: 0.5
   ra_evne_a:
-    enabled: true
+    enabled: false
     label: RA-EVNE-A
     solver: ra_evne_a
     kind: auto
@@ -334,7 +334,7 @@ methods:
       bandwidth_attribute: bw
       empty_distance: 1
   ra_evne_original:
-    enabled: true
+    enabled: false
     label: RA-EVNE-original
     solver: ra_evne_original
     kind: auto

@@ -27,6 +27,8 @@ METHODS = {
     'ra_evne_a': ('ra_evne_a', 'RA-EVNE-A', 'adaptation'),
     'ra_evne_original': ('ra_evne_original', 'RA-EVNE-original', 'reconstruction'),
 }
+DEFAULT_METHODS = {name:spec for name,spec in METHODS.items()
+                   if name not in ('ra_evne_a','ra_evne_original')}
 METRICS = ['acceptance_rate', 'avg_r2c_ratio', 'long_term_r2c_ratio',
            'long_term_time_r2c_ratio', 'sla_satisfaction_rate',
            'sla_service_rate_all_arrivals', 'mean_delivered_availability',

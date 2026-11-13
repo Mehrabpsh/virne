@@ -107,17 +107,19 @@ python -m scripts.thesis.experiments_v2.run_experiment \
   --set protocol.training.online=true
 ```
 
-This runner retains its usual **training-then-evaluation** matrix: training has
-no realized failures and evaluation has live failures with no further training.
+This runner uses a **training-then-paired-evaluation** matrix: training has
+no realized failures. Failure-free held-out evaluation always runs; enabling
+live failures adds an online failure/repair evaluation with no further training.
 Use the standalone checkpoint command above when training has already finished.
 No rates, objective parameters, workload or training budgets are changed by
-turning on the evaluation mode. For a matched failure-free reference, use the
-same saved checkpoint and exogenous scenario; it is not a failure-replay study.
+turning on the evaluation mode. Each pair uses the same saved checkpoint,
+topology, requests, resource demands, SLA assignments and workload seed.
 
-Enabling this flag does **not** append a second held-out evaluation to a
-failure-free held-out evaluation. Enabled means the planned evaluation is live;
-disabled means the planned evaluation is failure-free. Usual internal training
-validation stays failure-free. All selected methods receive the same mode;
+Enabled now means **both failure-free and live held-out evaluations**; disabled
+means failure-free held-out evaluation only. This supersedes commit d7af1a0's
+live-only behavior: historical results from that commit contain live held-out
+evaluations only and do not acquire a failure-free reference retroactively.
+Usual internal training validation stays failure-free. All selected methods receive the same modes;
 heuristics skip training. Methods run separately with matched exogenous traces,
 not together as competing policies in one shared resource ledger.
 
@@ -127,15 +129,25 @@ not together as competing policies in one shared resource ledger.
 is a ready-to-run full proposal, retaining the calibrated physical environment,
 comparator objectives and architectures. It sets:
 
-- All 11 configured methods: original PPO, reliability-aware PPO, Cand-RL, FFD,
-  NRM, GRC, RW, RA-NRM, RA-GRC, RA-EVNE-A and RA-EVNE-original.
+- Nine active methods: original PPO, reliability-aware PPO, Cand-RL, FFD,
+  NRM, GRC, RW, RA-NRM and RA-GRC. Both RA-EVNE variants are disabled in all
+  shipped experiment-v2 examples and excluded from legacy default runners.
 - Three independent training seeds `[31,37,43]`, 50 epochs each; batch size 16
   and target steps 32, matching the corrected PPO's 50-epoch test settings.
 - Evaluation scenarios `[100,110,120]`, 1,000 requests per scenario, live
   failures enabled, all-up initialization and offset 1000003.
-- 9 training jobs, 27 learned evaluations and 24 heuristic evaluations:
-  **60 total jobs**. Training/internal validation is analytic; held-out evaluation
-  is live and frozen. No extra failure-free held-out evaluation is included.
+- 9 training jobs, 45 failure-free evaluations and45 live evaluations:
+  **99 total jobs**. Training/internal validation is analytic; both held-out modes
+  are frozen. The two modes reuse one trained checkpoint; no extra training occurs.
+
+Every evaluation manifest/aggregate row has `evaluation_mode` equal to
+`failure_free` or `live_failures`. Failure-free run IDs/layout remain compatible;
+additional live jobs use `eval_live__...` and an `eval/live_failures/` directory.
+Summary tables, model/scenario variation, method pairing, SLA-class plots and
+interpretations are separated by mode. `paired_evaluation_modes.csv` reports
+live minus failure-free for each method/model/workload pair. Observed outage
+metrics are not measured in failure-free runs and remain null there; they are
+never filled with invented zeros or pooled into the live measurements.
 
 From a fresh checkout, reuse the server's established virtual environment rather
 than replacing its scientific dependencies:
@@ -176,7 +188,8 @@ Observed fields may be added to the experiment's configured `metrics` list:
   distinct from request placement/routing rejections).
 - `requested_service_time`, `admitted_service_time`, `fulfilled_service_time`.
 
-Requesting observed failure metrics while the mode is disabled fails preflight;
+When the mode is disabled, configured observed outage metrics stay null, the
+resolver records a warning, and their plots are omitted. No live jobs run and
 unmeasured observations are never fabricated as zero. The existing revenue/cost
 definitions are retained and are not automatically converted to uptime billing.
 

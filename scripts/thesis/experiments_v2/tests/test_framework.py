@@ -64,7 +64,7 @@ def test_runner_owned_raw_override_rejected(path):
 
 
 def test_global_environment_override_shared_and_derived_history_rebuilt():
-    r=resolved(raw=['p_net_setting.topology.num_nodes=14','v_sim_setting.arrival_rate.rate=0.1'])
+    r=resolved(sets=['methods.ra_evne_original.enabled=true'],raw=['p_net_setting.topology.num_nodes=14','v_sim_setting.arrival_rate.rate=0.1'])
     assert all(m['virne_config']['p_net_setting']['topology']['num_nodes']==14 for m in r['selected_methods'].values())
     assert len(r['selected_methods']['ra_evne_original']['virne_config']['ra_evne']['ages'])==14
     assert r['resolved_environment']['v_sim_setting']['arrival_rate']['rate']==.1

@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from common import ROOT, METHODS, command, launch, read_yaml, write_json, write_yaml
+from common import ROOT, DEFAULT_METHODS as METHODS, command, launch, read_yaml, write_json, write_yaml
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
     if len(set(p['train_seeds']))!=len(p['train_seeds']) or len(set(p['test_seeds']))!=len(p['test_seeds']):a.error('Duplicate seeds')
     if args.dry_run:
         print(json.dumps({'profile':p,'methods':METHODS,'training_jobs':3*len(p['train_seeds']),
-                          'evaluation_jobs':len(p['test_seeds'])*(8+3*len(p['train_seeds'])),
+                          'evaluation_jobs':len(p['test_seeds'])*(6+3*len(p['train_seeds'])),
                           'calibration_jobs':2*len(p['calibration']['seeds'])*len(p['calibration']['arrival_rates'])*len(p['calibration']['failure_rates']),
                           'stages':['preflight','tests (optional)','calibration','freeze','train','online evaluation','aggregate','validate','plot','report','complete']},indent=2))
         return

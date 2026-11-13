@@ -6,11 +6,31 @@ import pandas as pd
 from scripts.thesis.experiments.common import write_json
 
 
+def mode_groups(frame):
+    """Legacy single-mode files keep their schema; new modes never pool."""
+    return frame.groupby('evaluation_mode',sort=False) if 'evaluation_mode' in frame else [(None,frame)]
+
+
+def mode_metrics(metrics,mode):
+    from virne.reliability.live_failures import LIVE_METRICS
+    return [m for m in metrics if mode!='failure_free' or m not in LIVE_METRICS]
+
+
 def tables(frame,metrics):
+    outputs=[[],[],[]]
+    for mode,group in mode_groups(frame):
+        for target,table in zip(outputs,_tables(group,metrics)):
+            if mode is not None:table.insert(0,'evaluation_mode',mode)
+            target.append(table)
+    return tuple(pd.concat(values,ignore_index=True) for values in outputs)
+
+
+def _tables(frame,metrics):
     metadata={'train_seed','eval_seed','test_seed','seed','run_id','method','label','category','phase','solver',
               'relative_directory','relative_output_root','run_directory','model_path','records','completed',
               'reliability_enabled','reliability_mode','objective','reward','beta','topology','assessment_mode',
-              'assessment_provenance','input_hash','source_commit','model_reload_observed'}
+              'assessment_provenance','input_hash','source_commit','model_reload_observed','evaluation_mode',
+              'live_failures_enabled','failure_trace_sha256','runtime_inputs_verified'}
     numeric=[]
     frame=frame.copy()
     for column in frame.columns:
@@ -44,6 +64,15 @@ def tables(frame,metrics):
 
 
 def paired_differences(by_eval,metrics):
+    outputs=[]
+    for mode,group in mode_groups(by_eval):
+        result=_paired_differences(group,metrics)
+        if mode is not None:result.insert(0,'evaluation_mode',mode)
+        outputs.append(result)
+    return pd.concat(outputs,ignore_index=True)
+
+
+def _paired_differences(by_eval,metrics):
     rows=[]
     for left,right in itertools.combinations(by_eval.method.unique(),2):
         a=by_eval.loc[by_eval.method==left].set_index('eval_seed')
@@ -51,6 +80,23 @@ def paired_differences(by_eval,metrics):
         for seed in a.index.intersection(b.index):
             rows.append({'method_a':left,'method_b':right,'eval_seed':int(seed),**{m:a.loc[seed,m]-b.loc[seed,m] for m in metrics}})
     return pd.DataFrame(rows,columns=['method_a','method_b','eval_seed',*metrics])
+
+
+def paired_modes(frame,metrics):
+    """Within the same model/scenario: live minus failure-free, without pooling."""
+    keys=['method','train_seed','eval_seed']
+    columns=keys+['difference_direction',*metrics]
+    if 'evaluation_mode' not in frame:return pd.DataFrame(columns=columns)
+    free=frame.loc[frame.evaluation_mode.eq('failure_free')]
+    live=frame.loc[frame.evaluation_mode.eq('live_failures')]
+    if live.empty:return pd.DataFrame(columns=columns)
+    # Pandas matches null train_seed values for heuristic pairs as intended.
+    paired=live.merge(free,on=keys,suffixes=('_live','_free'),validate='one_to_one')
+    if len(paired)!=len(live):raise ValueError('Live evaluation lacks a failure-free pair')
+    result=paired[keys].copy();result['difference_direction']='live_failures_minus_failure_free'
+    for metric in metrics:
+        result[metric]=paired[metric+'_live']-paired[metric+'_free']
+    return result[columns]
 
 
 def run(bundle,resolved,rows):
@@ -62,4 +108,5 @@ def run(bundle,resolved,rows):
     summary.to_csv(out/'results_summary.csv',index=False)
     write_json(out/'results_summary.json',summary.to_dict('records'))
     paired_differences(by_eval,resolved['experiment']['metrics']).to_csv(out/'paired_differences_by_eval_seed.csv',index=False)
+    paired_modes(frame,resolved['experiment']['metrics']).to_csv(out/'paired_evaluation_modes.csv',index=False)
     return frame

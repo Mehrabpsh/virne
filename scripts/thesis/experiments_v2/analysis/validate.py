@@ -7,7 +7,7 @@ from omegaconf import OmegaConf
 from scripts.thesis.experiments.common import METRICS, write_json
 from scripts.thesis.experiments.shared_checks import evaluation_errors, metric_errors
 from ..execution.planner import final_config, jobs, system_mode, tensorboard_path
-from .aggregate import tables, paired_differences
+from .aggregate import tables, paired_differences, paired_modes
 
 
 def same_frame(actual,expected,name):
@@ -19,8 +19,9 @@ def same_frame(actual,expected,name):
 def fairness_errors(frame):
     errors=[f'Exogenous input fingerprint mismatch for evaluation seed {seed}' for seed,g in frame.groupby('eval_seed') if g.input_hash.nunique()!=1]
     if 'failure_trace_sha256' in frame:
+        live=frame.loc[frame.evaluation_mode.eq('live_failures')] if 'evaluation_mode' in frame else frame
         errors.extend(f'Failure trajectory fingerprint mismatch for evaluation seed {seed}'
-                      for seed,g in frame.groupby('eval_seed') if g.failure_trace_sha256.isna().any() or g.failure_trace_sha256.nunique()!=1)
+                      for seed,g in live.groupby('eval_seed') if g.failure_trace_sha256.isna().any() or g.failure_trace_sha256.nunique()!=1)
     return errors
 
 
@@ -35,7 +36,7 @@ def mode_errors(resolved,job,config,audit):
         errors.append(f'{job["run_id"]}: runtime did not complete solver.learn')
     if job['phase']=='eval' and (audit.get('training_requested') or audit.get('optimizer_updates',0)):
         errors.append(f'{job["run_id"]}: runtime trained during evaluation')
-    expected_live=job['phase']=='eval' and resolved['experiment']['protocol']['evaluation'].get('live_failures',{}).get('enabled',False)
+    expected_live=job['phase']=='eval' and job.get('evaluation_mode','failure_free')=='live_failures'
     if bool(config.get('live_failures',{}).get('enabled',False))!=expected_live:
         errors.append(f'{job["run_id"]}: live failure mode differs from planned evaluation')
     return errors
@@ -90,6 +91,8 @@ def run(bundle,resolved,manifest):
         for _,row in frame.iterrows():
             j=job_map[row.run_id]
             check(row.method==j['method'] and row.eval_seed==j['eval_seed'],f'{row.run_id}: wrong method/evaluation seed in aggregation')
+            check(row.evaluation_mode==j['evaluation_mode'],f'{row.run_id}: wrong evaluation mode in aggregation')
+            check(bool(row.live_failures_enabled)==(j['evaluation_mode']=='live_failures'),f'{row.run_id}: measured failure mode differs from plan')
             check((pd.isna(row.train_seed) and j['train_seed'] is None) or row.train_seed==j['train_seed'],f'{row.run_id}: wrong training seed in aggregation')
         for _,r in frame.iterrows():
             arrivals=pd.read_csv(Path(r.run_directory)/'assessment_arrivals.csv')
@@ -100,7 +103,8 @@ def run(bundle,resolved,manifest):
                 check((values>=0).all() if key=='sla_shortfall' else values.between(0,1).all(),f'{r.run_id}: raw {key} outside range')
         by_train,by_eval,summary=tables(frame,resolved['experiment']['metrics'])
         for name,table in [('results_by_train_seed',by_train),('results_by_eval_seed',by_eval),('results_summary',summary),
-                           ('paired_differences_by_eval_seed',paired_differences(by_eval,resolved['experiment']['metrics']))]:
+                           ('paired_differences_by_eval_seed',paired_differences(by_eval,resolved['experiment']['metrics'])),
+                           ('paired_evaluation_modes',paired_modes(frame,resolved['experiment']['metrics']))]:
             same_frame(pd.read_csv(bundle/'aggregated'/f'{name}.csv'),table,name)
         for file in ('input_config.yaml','cli_overrides.yaml','raw_virne_overrides.yaml','resolved_config.yaml','execution_summary.yaml','source_commit.txt','source_status.txt','hardware.json','commands.sh','manifest.json','manifest.csv'):
             check((bundle/file).is_file(),f'Missing provenance: {file}')

@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 from scripts.thesis.experiments.common import write_json
+from .aggregate import mode_groups, mode_metrics
 
 STATS='''For learned methods, average each metric across evaluation seeds within each trained model,
 then average those model means. train_std is sample SD (ddof=1) across model means.
@@ -15,14 +16,33 @@ For heuristics, mean and eval_std use evaluation seeds; train_std is null.
 A single valid observation has undefined SD (null/NaN), not zero. Missing conditional SLA means
 remain null and valid counts are reported. These crossed observations are dependent; neither SD
 is a confidence interval. Paired differences average models within each evaluation scenario before
-subtracting methods. All long-format observations remain available.'''
+subtracting methods. Failure-free and live-failure evaluations are summarized separately;
+no mean or SD pools the two modes. Matched mode differences use live minus failure-free
+for the same method, checkpoint seed, and workload seed. All long-format observations remain available.'''
+
+
+def evaluation_description(observations,resolved):
+    if 'evaluation_mode' in observations and not observations.empty:
+        modes=set(observations.evaluation_mode)
+        if modes=={'failure_free','live_failures'}:
+            return ('This bundle contains matched failure-free and live failure/repair evaluations of the same checkpoints and workloads. '
+                    'Modes are never pooled; observed outage metrics are unmeasured/null in failure-free rows.')
+        if modes=={'failure_free'}:
+            return 'This bundle contains failure-free held-out evaluations only. Observed outage metrics are unmeasured/null.'
+        return 'This bundle contains live failure/repair evaluations only; no failure-free held-out reference is recorded.'
+    live=resolved['experiment']['protocol']['evaluation'].get('live_failures',{}).get('enabled',False)
+    return ('This legacy bundle used live-only held-out evaluation; no failure-free reference was recorded. '
+            'The current paired planner does not change historical results.' if live else
+            'This legacy bundle used failure-free held-out evaluation only.')
 
 
 def result_interpretations(observations):
     """Evidence-bound descriptions; never infer causes or significance from a rank."""
     result=[]
     if observations.empty or 'method' not in observations:return result
-    for method,group in observations.groupby('method',sort=False):
+    grouping=['evaluation_mode','method'] if 'evaluation_mode' in observations else ['method']
+    for identity,group in observations.groupby(grouping,sort=False):
+        method=group.method.iloc[0]
         facts=[]
         if {'success_count','v_net_count','sla_service_rate_all_arrivals'}<=set(group.columns):
             admitted=int(group.success_count.sum());arrivals=int(group.v_net_count.sum())
@@ -34,7 +54,7 @@ def result_interpretations(observations):
             facts.append(f'Mean normalized shortfall across runs: {group.mean_sla_shortfall.mean():.6g}. '
                          'Shortfall measures severity relative to the SLA unavailability budget, not a percentage of violations. '
                          'A zero median does not imply no violations.')
-        if 'observed_service_availability' in group:
+        if 'admitted_service_time' in group and group.admitted_service_time.notna().any():
             admitted_time=group.admitted_service_time.sum()
             downtime=group.total_service_downtime.sum()
             if admitted_time>0:
@@ -44,7 +64,8 @@ def result_interpretations(observations):
             if 'component_failure_count' in group and group.component_failure_count.eq(0).all():
                 facts.append('No component failure transitions occurred: this run does not establish resilience to realized outages; initial component states are recorded in the trace.')
         facts.append('No causal explanation, convergence, or statistical superiority is inferred from these summaries alone.')
-        result.append({'method':method,'interpretation':' '.join(facts)})
+        result.append({**({'evaluation_mode':group.evaluation_mode.iloc[0]} if 'evaluation_mode' in group else {}),
+                       'method':method,'interpretation':' '.join(facts)})
     return result
 
 
@@ -53,8 +74,13 @@ def run(bundle,resolved,summary,manifest,validation):
     render_html(bundle,resolved,summary,manifest,validation)
     frame=pd.read_csv(bundle/'aggregated/results_summary.csv')
     metrics=resolved['experiment']['metrics']
-    table='| Method | '+' | '.join(m+' mean' for m in metrics)+' |\n| --- | '+' | '.join('---' for _ in metrics)+' |\n'
-    for _,row in frame.iterrows():table+='| '+str(row.label)+' | '+' | '.join('NaN' if pd.isna(row[m+'_mean']) else f'{row[m+"_mean"]:.6g}' for m in metrics)+' |\n'
+    table=''
+    for mode,group in mode_groups(frame):
+        active_metrics=mode_metrics(metrics,mode)
+        if mode is not None:table+='### '+mode+'\n\n'
+        table+='| Method | '+' | '.join(m+' mean' for m in active_metrics)+' |\n| --- | '+' | '.join('---' for _ in active_metrics)+' |\n'
+        for _,row in group.iterrows():table+='| '+str(row.label)+' | '+' | '.join('NaN' if pd.isna(row[m+'_mean']) else f'{row[m+"_mean"]:.6g}' for m in active_metrics)+' |\n'
+        table+='\n'
     plots=sorted((bundle/'plots').glob('*')) if (bundle/'plots').exists() else []
     hardware=json.loads((bundle/'hardware.json').read_text())
     text=('# Thesis Experiment Framework v2 — preliminary pipeline validation\n\n'
@@ -83,12 +109,13 @@ def run(bundle,resolved,summary,manifest,validation):
           '## Warnings\n\n'+''.join('- '+v+'\n' for v in validation['warnings'])+'\n'
           'Cand-RL remains a thesis_joint reconstruction with custom Cand MLP actor/critic and redundancy=none. RA parameters and static '
           'Weibull/history assumptions are provisional; no exact Paper-9 reproduction or scientific superiority is claimed. '
-          'One training epoch cannot establish convergence.\n\n'
+          'Training completion and policy updates do not establish convergence.\n\n'
           '## Figures\n\n'+''.join(f'- [{p.name}](../plots/{p.name})\n' for p in plots if p.suffix in ('.png','.pdf')))
     interpretations=result_interpretations(read_csv(bundle/'aggregated/results_long.csv'))
-    text+='\n## Interpretation of finalized results\n\n'+''.join('### '+r['method']+'\n\n'+r['interpretation']+'\n\n' for r in interpretations)
+    text+='\n## Interpretation of finalized results\n\n'+''.join('### '+r.get('evaluation_mode','legacy')+' / '+r['method']+'\n\n'+r['interpretation']+'\n\n' for r in interpretations)
     text+='Predicted SLA compliance and empirical uptime are separate measurements. Request rejections are not component failures. '
-    text+='Live evaluation, when enabled, retains reservations and waits for repair; it performs no retraining or automatic rerouting.\n'
+    text+=evaluation_description(read_csv(bundle/'aggregated/results_long.csv'),resolved)+' '
+    text+='Live evaluation retains reservations and waits for repair; it performs no retraining or automatic rerouting.\n'
     if resolved['experiment']['reporting']['generate_markdown_report']:(out/'experiment_report.md').write_text(text)
     write_json(out/'experiment_report.json',{'hardware':hardware,'execution_summary':summary,'resolved_config':resolved,
                'manifest':manifest,'validation':validation,'statistics_semantics':STATS,'results':frame.to_dict('records')})
@@ -111,6 +138,8 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
     esc=lambda value:html.escape(str(value),quote=True)
     def table(frame):
         if frame.empty:return '<p class="muted">No observations available.</p>'
+        if 'evaluation_mode' in frame and frame.evaluation_mode.nunique()>1:
+            return ''.join('<h3>'+esc(mode)+'</h3>'+table(group.dropna(axis=1,how='all')) for mode,group in mode_groups(frame))
         return '<div class="scroll">'+frame.to_html(index=False,escape=True,na_rep='—',float_format=lambda x:f'{x:.6g}')+'</div>'
     def dump(value):return '<pre>'+esc(yaml.safe_dump(value,sort_keys=False))+'</pre>'
     def link(path):
@@ -174,11 +203,11 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
         (link(tb) if tb.is_dir() else 'unavailable (disabled or legacy bundle)')+'</p><pre>'+esc(tb_command)+'</pre>'+images(training_figs)+
         '<p>Training curves describe the recorded budget; a tiny smoke run does not establish convergence.</p>')
     def metric_table(tokens):
-        columns=[c for c in aggregate if c in ('method','label','category') or any(token in c for token in tokens)]
+        columns=[c for c in aggregate if c in ('evaluation_mode','method','label','category') or any(token in c for token in tokens)]
         return table(aggregate[columns]) if columns else table(pd.DataFrame())
     def finalized_runs(tokens):
         observations=read_csv(bundle/'aggregated/results_long.csv')
-        columns=[c for c in observations if c in ('method','train_seed','eval_seed') or
+        columns=[c for c in observations if c in ('evaluation_mode','method','train_seed','eval_seed') or
                  (pd.api.types.is_numeric_dtype(observations[c]) and any(token in c for token in tokens))]
         return '<h3>Finalized per-run observations</h3>'+table(observations[columns]) if columns else ''
     section(5,'Economic Evaluation',metric_table(['acceptance','r2c','revenue','cost'])+
@@ -189,6 +218,7 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
     live_body=''
     if live:
         live_body=('<h3>Observed service delivery under live failures</h3>'+
+                   '<p>'+esc(evaluation_description(observations,resolved))+'</p>'+
                    '<p>Frozen policy evaluation; reservations retained during outages; wait for repair; '
                    'no rerouting or replication. Component transitions precede workload events at the same time. '
                    'All original departures are included. Observed availability is weighted by admitted service-time; '
@@ -208,7 +238,8 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
     section(8,'Aggregated Statistics','<p>'+esc(STATS)+'</p>'+table(aggregate)+
         '<h3>Across training seeds</h3>'+table(read_csv(bundle/'aggregated/results_by_train_seed.csv'))+
         '<h3>Across evaluation seeds</h3>'+table(read_csv(bundle/'aggregated/results_by_eval_seed.csv'))+
-        '<h3>Paired differences by evaluation seed</h3>'+table(read_csv(bundle/'aggregated/paired_differences_by_eval_seed.csv')))
+        '<h3>Paired differences by evaluation seed</h3>'+table(read_csv(bundle/'aggregated/paired_differences_by_eval_seed.csv'))+
+        '<h3>Matched mode differences: live minus failure-free</h3>'+table(read_csv(bundle/'aggregated/paired_evaluation_modes.csv')))
     section(9,'Validation / Fairness Checks',dump(validation)+
         '<p>Environment fingerprint, scenario fairness, checkpoint reload, resource release and aggregation checks are taken from the existing validator.</p>')
     artifacts=[p for p in bundle.rglob('*') if p.is_file() and ('framework_source' not in p.parts and 'matplotlib_cache' not in p.parts)

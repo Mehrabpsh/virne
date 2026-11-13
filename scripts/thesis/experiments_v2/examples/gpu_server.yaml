@@ -244,7 +244,7 @@ methods:
       combine: normalized_risk_weighted_sum
       alpha: 0.5
   ra_evne_a:
-    enabled: true
+    enabled: false
     label: RA-EVNE-A
     solver: ra_evne_a
     kind: auto
@@ -256,7 +256,7 @@ methods:
       bandwidth_attribute: bw
       empty_distance: 1
   ra_evne_original:
-    enabled: true
+    enabled: false
     label: RA-EVNE-original
     solver: ra_evne_original
     kind: auto

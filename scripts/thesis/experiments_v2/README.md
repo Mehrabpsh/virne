@@ -94,6 +94,8 @@ PPO learning rates map to `rl.learning_rate.actor/critic`, not `training.learnin
 A method ID is a treatment; `solver` is its registry implementation. Arbitrary method
 names and multiple treatments of one solver are supported. Enabled registry solvers
 are inspected dynamically; the runner contains no fixed thesis method list.
+The shipped examples disable both RA-EVNE variants. Active thesis comparisons use
+original PPO, reliability-aware PPO, Cand-RL, FFD, NRM, GRC, RW, RA-NRM and RA-GRC.
 
 `kind: auto` infers the current RLSolver lifecycle. `kind: learned` requires a concrete
 solve API, RLSolver training/learn_singly and save/load methods. `kind: heuristic` must
@@ -150,7 +152,12 @@ and new values. Adoption remains provisional, not scientific freezing.
 All learned methods use `protocol.training.seeds`. All methods use the same
 `protocol.evaluation.seeds`; no separate validation-seed stage is introduced. Evaluation
 uses OnlineSystem, zero training epochs, expected checkpoint reload and no optimizer
-telemetry. Learned job counts are T training + T×E evaluations; heuristics have E runs.
+telemetry. Failure-free evaluation always runs. When
+`protocol.evaluation.live_failures.enabled=true`, an additional live failure/repair
+evaluation runs for every method/model/scenario pair, using the same checkpoint
+and workload. With M=1 (disabled) or M=2 (enabled), learned job counts are
+T training + M×T×E evaluations; heuristics have M×E runs. Training is never repeated
+for the second mode. See [live evaluation details](../../../docs/live_failure_evaluation.md).
 A second training seed can be enabled without changing any YAML file using `--set`.
 
 The existing seeded generator, Counter, analytic evaluator and full input fingerprint
@@ -164,11 +171,16 @@ evaluation seeds define different paired substrate/workload scenarios.
 
 Outputs preserve the crossed structure:
 
-- `results_long.csv`: every evaluation, with train_seed and eval_seed.
+- `results_long.csv`: every evaluation, with evaluation_mode, train_seed and eval_seed.
 - `results_by_train_seed.csv`: average evaluation metrics for each trained model.
 - `results_by_eval_seed.csv`: average models within each shared scenario.
 - `results_summary.csv/.json`: hierarchical mean, train_std, eval_std, counts.
 - `paired_differences_by_eval_seed.csv`: method differences on shared scenario means.
+- `paired_evaluation_modes.csv`: live minus failure-free for the same method/model/scenario.
+
+All summary tables, method comparisons, interpretations and figures retain
+`evaluation_mode`; the two evaluation modes are never averaged together. Outage
+metrics are measured only in live runs and remain null in failure-free rows.
 
 For learned methods the overall mean averages model means. train_std is sample SD
 (ddof=1) across model means; eval_std is sample SD across scenario means after averaging
@@ -190,6 +202,8 @@ Method grouping preserves the original launcher's normal solver/run-ID tier:
 methods/<method>/train/<solver>/<unique_run_id>/
 methods/<method>/eval/train_<training_seed>/<solver>/<unique_run_id>/
 methods/<heuristic>/eval/<solver>/<unique_run_id>/
+methods/<method>/eval/live_failures/train_<training_seed>/<solver>/eval_live__.../
+methods/<heuristic>/eval/live_failures/<solver>/eval_live__.../
 ```
 
 Each leaf retains config.yaml, hydra_config.yaml, command, stdout/logs, records, runtime,
