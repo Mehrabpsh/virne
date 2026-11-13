@@ -134,6 +134,8 @@ comparator objectives and architectures. It sets:
   shipped experiment-v2 examples and excluded from legacy default runners.
 - Three independent training seeds `[31,37,43]`, 50 epochs each; batch size 16
   and target steps 32, matching the corrected PPO's 50-epoch test settings.
+- Both PPO variants use provisional actor LR 0.0001 and guarded target KL 0.02;
+  see [PPO stability](ppo_stability.md). Cand-RL keeps its existing optimizer.
 - Evaluation scenarios `[100,110,120]`, 1,000 requests per scenario, live
   failures enabled, all-up initialization and offset 1000003.
 - 9 training jobs, 45 failure-free evaluations and45 live evaluations:

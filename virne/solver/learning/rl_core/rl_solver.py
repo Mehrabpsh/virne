@@ -82,9 +82,9 @@ class RLSolver(Solver):
         # self.config.rl.target_kl = kwargs.get('target_kl', 0.01)
         if self.config.rl.norm_reward:
             self.running_stats = RunningMeanStd(shape=1)
-        self.config.rl.norm_advantage = kwargs.get('norm_advantage', True)
-        self.config.rl.clip_grad = kwargs.get('clip_grad', True)
-        self.config.rl.max_grad_norm = kwargs.get('max_grad_norm', 1.)
+        self.config.rl.norm_advantage = kwargs.get('norm_advantage', self.config.rl.norm_advantage)
+        self.config.rl.clip_grad = kwargs.get('clip_grad', self.config.rl.clip_grad)
+        self.config.rl.max_grad_norm = kwargs.get('max_grad_norm', self.config.rl.max_grad_norm)
         self.softmax_temp = 1.
         # log
         self.log_dir = os.path.join(self.save_dir, self.config.logger.log_dir_name)
@@ -422,20 +422,22 @@ class RLSolver(Solver):
                                     maskable_policy=self.config.rl.maskable_policy)
 
     def update_grad(self, loss):
+        if not torch.isfinite(loss).all():
+            raise FloatingPointError('Nonfinite optimizer loss; parameters were not updated')
         # update parameters
         if self.config.training.distributed_training:
             with self.lock:
                 self.optimizer.zero_grad()
                 self.shared_optimizer.zero_grad()
                 loss.backward()
-                grad_clipped = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.rl.max_grad_norm) if self.config.rl.clip_grad else None
+                grad_clipped = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.rl.max_grad_norm if self.config.rl.clip_grad else float('inf'), error_if_nonfinite=True)
                 sync_gradients(self.shared_policy, self.policy)
                 self.optimizer.step()
                 self.shared_optimizer.step()
         else:
             self.optimizer.zero_grad()
             loss.backward()
-            grad_clipped = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.rl.max_grad_norm) if self.config.rl.clip_grad else None
+            grad_clipped = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.rl.max_grad_norm if self.config.rl.clip_grad else float('inf'), error_if_nonfinite=True)
             self.optimizer.step()
         return grad_clipped
 
@@ -565,6 +567,10 @@ class PPOSolver(RLSolver):
         self.repeat_times = kwargs.get('repeat_times', self.config.rl.repeat_times)
         self.gae_lambda = kwargs.get('gae_lambda', self.config.rl.gae_lambda)
         self.eps_clip = kwargs.get('eps_clip', self.config.rl.eps_clip)
+        from .ppo_stability import validate_settings
+        validate_settings(self.config)
+        self.ppo_guard_stats={'accepted_updates':0,'rejected_proposals':0,'skipped_batches':0,
+                              'max_accepted_exact_kl':0.}
 
     def calculate_kl_divergence(self, old_observations, old_policy):
         actions_logits = self.policy.act(old_observations)
@@ -591,6 +597,12 @@ class PPOSolver(RLSolver):
             batch_returns,
             self.buffer.values,
         )
+        guard=None
+        if self.config.rl.get('kl_guard',{}).get('enabled',False):
+            from .ppo_stability import PPOUpdateGuard
+            guard=PPOUpdateGuard(self,self.preprocess_obs(self.buffer.observations,self.device),
+                                 batch_actions.to(self.device),batch_old_action_logprobs.to(self.device))
+        self.ppo_update_diagnostics=[] if guard is None else guard.diagnostics
         sample_times = self.calculate_update_sample_times()
         for i in range(sample_times):
             sample_indices = torch.randint(0, self.buffer.size(), size=(self.batch_size,)).long()
@@ -619,12 +631,23 @@ class PPOSolver(RLSolver):
 
             loss = actor_loss + self.coef_critic_loss * critic_loss - self.coef_entropy_loss * entropy_loss + self.coef_mask_loss * mask_loss + prediction_loss
 
-            if self.config.rl.target_kl is not None and approx_kl > 1.5 * self.config.rl.target_kl:
+            if guard is None and self.config.rl.target_kl is not None and approx_kl > 1.5 * self.config.rl.target_kl:
                 print(f'Early stopping at update time {self.update_time}, kl: {approx_kl:2.4f}')
                 break
 
             # update parameters
-            grad_clipped = self.update_grad(loss)
+            if guard is None:
+                grad_clipped = self.update_grad(loss)
+            else:
+                grad_clipped,decision=guard.step(loss)
+                stats=self.ppo_guard_stats
+                stats['rejected_proposals']+=decision['backtracks']+int(not decision['accepted'])
+                if not decision['accepted']:
+                    stats['skipped_batches']+=1
+                    self.logger.log_scalars({'ppo/rejected_update':1,'ppo/exact_kl':decision['exact_kl']},self.update_time)
+                    break
+                stats['accepted_updates']+=1
+                stats['max_accepted_exact_kl']=max(stats['max_accepted_exact_kl'],decision['exact_kl'])
         
             if self.update_time % self.config.training.log_interval == 0:
                 info = {
@@ -642,6 +665,9 @@ class PPOSolver(RLSolver):
                     'value/reward': batch_rewards.mean().cpu().numpy(),
                     'grad/grad_clipped': grad_clipped.detach().cpu().numpy()
                 }
+                if guard is not None:
+                    info.update({'info/exact_kl':decision['exact_kl'],'info/max_state_kl':decision['max_state_kl'],
+                                 'info/kl_backtracks':decision['backtracks'],'info/step_scale':decision['step_scale']})
                 self.logger.log(data=info, step=self.update_time)
 
             self.update_time += 1

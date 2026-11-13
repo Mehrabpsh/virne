@@ -88,6 +88,10 @@ rate path: search/override concrete scalar rates or existing uniform bounds expl
 The initial schema exposes uniform resources, existing default topology keys, and the
 existing workload settings. Unsupported distribution/extra-key semantics fail preflight.
 PPO learning rates map to `rl.learning_rate.actor/critic`, not `training.learning_rate`.
+The full paired-evaluation example enables provisional PPO stability overrides:
+actor LR 0.0001, target KL 0.02 and transactional KL guarding for both PPO variants.
+The guard defaults off elsewhere. See [PPO stability](../../../docs/ppo_stability.md)
+for configuration, diagnostics, compatibility and the remaining GPU validation.
 
 ## Methods and capabilities
 

@@ -147,6 +147,35 @@ def test_historical_live_only_bundle_does_not_acquire_a_failure_free_reference()
     assert 'failure-free held-out evaluations only' in evaluation_description(rows.iloc[:1],r)
 
 
+@pytest.mark.parametrize('method',['original_ppo','reliability_ppo'])
+def test_guarded_native_training_records_real_accepted_steps(tmp_path,method):
+    import torch
+    from virne.system import BaseSystem
+    from virne.utils.config import add_simulation_into_config
+    torch.set_num_threads(1)
+    r=resolve(EXAMPLE,['protocol.training.online=true','protocol.training.epochs=2',
+                      'environment.workload.num_requests=6','environment.workload.arrival_rate=0.2'],
+              ['rl.kl_guard.enabled=true','rl.target_kl=0.02','rl.learning_rate.actor=0.0001',
+               'rl.max_grad_norm=0.25','rl.norm_advantage=false'],subset=method)[0]
+    train=next(j for j in jobs(r) if j['phase']=='train')
+    cfg=OmegaConf.create(final_config(r,train,tmp_path,'cpu'))
+    add_simulation_into_config(cfg)
+    system=BaseSystem.from_config(cfg)
+    try:
+        assert system.solver.config.rl.max_grad_norm==.25
+        assert system.solver.config.rl.norm_advantage is False
+        system.run()
+        audit=json.loads(Path(cfg.logger.runtime_audit_path).read_text())
+        measured=audit['ppo_stability']
+        assert audit['optimizer_updates']==measured['accepted_updates']>0
+        assert 0<=measured['max_accepted_exact_kl']<=measured['target_kl']
+        assert measured['optimizer_learning_rates'][0]==.0001
+        assert audit['policy_sha256_before']!=audit['policy_sha256_after']
+        checkpoint=torch.load(Path(cfg.logger.runtime_audit_path).parent/'models/model.pkl',weights_only=False)
+        assert checkpoint['policy'] and checkpoint['optimizer']['state']
+    finally:system.logger.close()
+
+
 @pytest.mark.parametrize('method', ['original_ppo','reliability_ppo','cand_rl'])
 def test_trained_policy_is_frozen_in_live_evaluation(tmp_path, method):
     import torch

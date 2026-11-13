@@ -160,6 +160,12 @@ class BaseSystem:
             self._runtime_audit.update(training_completed=True,optimizer_updates=self.solver.update_time-updates_before)
             if audit_enabled:
                 self._runtime_audit.update(policy_sha256_before=before,policy_sha256_after=policy_digest())
+                if self.config.rl.get('kl_guard',{}).get('enabled',False) and hasattr(self.solver,'ppo_guard_stats'):
+                    self._runtime_audit['ppo_stability']={
+                        'target_kl':self.config.rl.target_kl,
+                        'kl_guard':OmegaConf.to_container(self.config.rl.kl_guard),
+                        'optimizer_learning_rates':[g['lr'] for g in self.solver.optimizer.param_groups],
+                        **self.solver.ppo_guard_stats}
             self.save_runtime_audit()
             self.logger.info(f'{"-" * 20} Pretrain {self.config.solver.solver_name} done {"-" * 20}\n')
         # set eval mode

@@ -194,6 +194,9 @@ class InstanceAgent(object):
         import time
         start_time = time.time()
         for epoch_id in range(num_epochs):
+            # Validation switches to eval mode. Restore training mode before
+            # collecting the next rollout (including after the first epoch).
+            self.train()
             self.logger.info(f'Training Epoch: {epoch_id}')
             self.training_epoch_id = epoch_id
             instance = env.reset(seed=self.get_training_seed())

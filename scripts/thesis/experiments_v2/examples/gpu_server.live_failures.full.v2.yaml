@@ -4,8 +4,9 @@
 experiment:
   name: thesis_live_50epochs_full
   description: 'Paired failure-free and live failure/repair evaluation: analytic training, frozen-policy
-    online evaluation, 3 training seeds and 3 evaluation scenarios. Existing calibrated
-    environment and comparator parameters retained; scientific settings remain provisional.'
+    online evaluation, 3 training seeds and 3 evaluation scenarios. Physical environment,
+    SLA and reward/objective definitions retained. PPO uses provisional lower actor
+    learning rate and guarded updates; scientific settings remain provisional.'
 runtime:
   device: cuda
   threads: 4
@@ -202,6 +203,11 @@ methods:
       name: original
     reward:
       name: fixed_intermediate
+    # Provisional PPO stability settings; physical model/objective unchanged.
+    overrides:
+      rl.learning_rate.actor: 0.0001
+      rl.target_kl: 0.02
+      rl.kl_guard.enabled: true
   reliability_ppo:
     enabled: true
     label: Reliability-aware PPO-DualGAT
@@ -225,6 +231,11 @@ methods:
     - remaining_budget
     - normalized_log_risk
     - remaining_budget_fraction
+    # Provisional PPO stability settings; physical model/objective unchanged.
+    overrides:
+      rl.learning_rate.actor: 0.0001
+      rl.target_kl: 0.02
+      rl.kl_guard.enabled: true
   cand_rl:
     enabled: true
     label: Cand-RL

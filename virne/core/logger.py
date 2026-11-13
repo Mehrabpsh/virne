@@ -105,7 +105,9 @@ class Logger:
             self.log_scalars(log_data,step or 0)
             aliases={'loss/loss':'ppo/total_loss','loss/actor_loss':'ppo/actor_loss',
                      'loss/critic_loss':'ppo/critic_loss','loss/entropy_loss':'ppo/entropy',
-                     'info/approx_kl':'ppo/approx_kl'}
+                     'info/approx_kl':'ppo/approx_kl','info/exact_kl':'ppo/exact_kl',
+                     'info/max_state_kl':'ppo/max_state_kl','info/kl_backtracks':'ppo/kl_backtracks',
+                     'info/step_scale':'ppo/step_scale'}
             self.log_scalars({aliases[k]:v for k,v in log_data.items() if k in aliases},step or 0)
 
     def log_scalars(self, data, step=0):

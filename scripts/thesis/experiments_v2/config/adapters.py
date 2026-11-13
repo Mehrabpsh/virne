@@ -150,6 +150,8 @@ def validate_virne(config):
     cfg=OmegaConf.create(config)
     try:
         validate_reliability_config(cfg)
+        from virne.solver.learning.rl_core.ppo_stability import validate_settings as validate_ppo_stability
+        validate_ppo_stability(cfg)
         from virne.solver.learning.rl_core import thesis_reward
         from virne.solver.learning.rl_core.reward_calculator import RewardCalculatorRegistry
         RewardCalculatorRegistry.get(cfg.rl.reward_calculator.name)(cfg)
