@@ -205,6 +205,7 @@ methods:
       name: fixed_intermediate
     # Provisional PPO stability settings; physical model/objective unchanged.
     overrides:
+      nn.actor_dtype: float64
       rl.learning_rate.actor: 0.0001
       rl.target_kl: 0.02
       rl.kl_guard.enabled: true
@@ -233,6 +234,7 @@ methods:
     - remaining_budget_fraction
     # Provisional PPO stability settings; physical model/objective unchanged.
     overrides:
+      nn.actor_dtype: float64
       rl.learning_rate.actor: 0.0001
       rl.target_kl: 0.02
       rl.kl_guard.enabled: true

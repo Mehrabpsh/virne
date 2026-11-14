@@ -105,6 +105,9 @@ def test_full_defaults_exclude_evne_and_plan_both_modes(tmp_path):
     free=next(j for j in plan if j.get('evaluation_mode')=='failure_free')
     live=next(j for j in plan if j.get('evaluation_mode')=='live_failures')
     a=final_config(r,free,tmp_path,'cpu');b=final_config(r,live,tmp_path,'cpu')
+    assert a['nn']['actor_dtype']==b['nn']['actor_dtype']=='float64'
+    assert r['selected_methods']['reliability_ppo']['virne_config']['nn']['actor_dtype']=='float64'
+    assert r['selected_methods']['cand_rl']['virne_config']['nn']['actor_dtype']=='float32'
     assert a['solver']['pretrained_model_path']==b['solver']['pretrained_model_path']
     for key in ['p_net_setting','v_sim_setting','reliability','sla','nn','joint_objective']:
         assert a[key]==b[key]
@@ -148,7 +151,8 @@ def test_historical_live_only_bundle_does_not_acquire_a_failure_free_reference()
 
 
 @pytest.mark.parametrize('method',['original_ppo','reliability_ppo'])
-def test_guarded_native_training_records_real_accepted_steps(tmp_path,method):
+@pytest.mark.parametrize('actor_dtype',['float32','float64'])
+def test_guarded_native_training_records_real_accepted_steps(tmp_path,method,actor_dtype):
     import torch
     from virne.system import BaseSystem
     from virne.utils.config import add_simulation_into_config
@@ -156,7 +160,7 @@ def test_guarded_native_training_records_real_accepted_steps(tmp_path,method):
     r=resolve(EXAMPLE,['protocol.training.online=true','protocol.training.epochs=2',
                       'environment.workload.num_requests=6','environment.workload.arrival_rate=0.2'],
               ['rl.kl_guard.enabled=true','rl.target_kl=0.02','rl.learning_rate.actor=0.0001',
-               'rl.max_grad_norm=0.25','rl.norm_advantage=false'],subset=method)[0]
+               'rl.max_grad_norm=0.25','rl.norm_advantage=false',f'nn.actor_dtype={actor_dtype}'],subset=method)[0]
     train=next(j for j in jobs(r) if j['phase']=='train')
     cfg=OmegaConf.create(final_config(r,train,tmp_path,'cpu'))
     add_simulation_into_config(cfg)
@@ -167,6 +171,7 @@ def test_guarded_native_training_records_real_accepted_steps(tmp_path,method):
         system.run()
         audit=json.loads(Path(cfg.logger.runtime_audit_path).read_text())
         measured=audit['ppo_stability']
+        assert audit['policy_parameter_dtypes']=={'actor':[f'torch.{actor_dtype}'],'critic':['torch.float32']}
         assert audit['optimizer_updates']==measured['accepted_updates']>0
         assert 0<=measured['max_accepted_exact_kl']<=measured['target_kl']
         assert measured['optimizer_learning_rates'][0]==.0001
@@ -175,6 +180,7 @@ def test_guarded_native_training_records_real_accepted_steps(tmp_path,method):
         assert audit['policy_sha256_before']!=audit['policy_sha256_after']
         checkpoint=torch.load(Path(cfg.logger.runtime_audit_path).parent/'models/model.pkl',weights_only=False)
         assert checkpoint['policy'] and checkpoint['optimizer']['state']
+        assert checkpoint['policy_parameter_dtypes']==audit['policy_parameter_dtypes']
     finally:system.logger.close()
 
 
@@ -206,14 +212,16 @@ def test_failed_native_training_preserves_completed_updates_and_guard_audit(tmp_
     finally:system.logger.close()
 
 
-@pytest.mark.parametrize('method', ['original_ppo','reliability_ppo','cand_rl'])
-def test_trained_policy_is_frozen_in_live_evaluation(tmp_path, method):
+@pytest.mark.parametrize('method,actor_dtype', [('original_ppo','float32'),('reliability_ppo','float32'),
+    ('cand_rl','float32'),('original_ppo','float64'),('reliability_ppo','float64')])
+def test_trained_policy_is_frozen_in_live_evaluation(tmp_path, method,actor_dtype):
     import torch
     from virne.system import BaseSystem
     from virne.utils.config import add_simulation_into_config
     from virne.reliability.config import validate_reliability_config
     torch.set_num_threads(1)
     r = resolved(method)
+    r['selected_methods'][method]['virne_config']['nn']['actor_dtype']=actor_dtype
     train = next(j for j in jobs(r) if j['phase'] == 'train')
     def system_for(job):
         config = OmegaConf.create(final_config(r, job, tmp_path, 'cpu'))
@@ -250,6 +258,7 @@ def test_trained_policy_is_frozen_in_live_evaluation(tmp_path, method):
             assert system.env.recorder.state['inservice_count'] == 0
             audit = json.loads((directory / 'runtime_system.json').read_text())
             assert not audit['training_requested'] and audit.get('optimizer_updates', 0) == 0
+            assert audit['policy_parameter_dtypes']['actor']==[f'torch.{actor_dtype}']
             assert not (directory / 'models/model.pkl').exists()
         finally:
             system.logger.close()

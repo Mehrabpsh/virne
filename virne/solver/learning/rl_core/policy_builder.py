@@ -214,6 +214,7 @@ class PolicyBuilder:
             **PolicyBuilder.get_feature_dim_config(agent.config),
             **PolicyBuilder.get_general_nn_config(agent.config),
             num_layers=agent.config.nn.num_gnn_layers,
+            actor_dtype=agent.config.nn.get('actor_dtype', 'float32'),
         ).to(agent.device)
         optimizer = OptimizerBuilder.build_optimizer(agent.config, policy)
         return policy, optimizer

@@ -152,6 +152,8 @@ def validate_virne(config):
         validate_reliability_config(cfg)
         from virne.solver.learning.rl_core.ppo_stability import validate_settings as validate_ppo_stability
         validate_ppo_stability(cfg)
+        require(cfg.nn.get('actor_dtype','float32') in ('float32','float64'),
+                'nn.actor_dtype must be float32 or float64')
         from virne.solver.learning.rl_core import thesis_reward
         from virne.solver.learning.rl_core.reward_calculator import RewardCalculatorRegistry
         RewardCalculatorRegistry.get(cfg.rl.reward_calculator.name)(cfg)

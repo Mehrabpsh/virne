@@ -737,6 +737,20 @@ def test_versioned_checkpoint_restores_its_feature_schema(tmp_path):
     target.logger.warning.assert_not_called()
 
 
+def test_checkpoint_precision_mismatch_fails_before_loading_weights(tmp_path):
+    source=make_checkpoint_solver()
+    source.policy.double()
+    path=tmp_path/'float64.pkl'
+    torch.save({'policy':source.policy.state_dict(),
+                'policy_parameter_dtypes':source.policy_parameter_dtypes()},path)
+    target=make_checkpoint_solver()
+    before={name:value.clone() for name,value in target.policy.state_dict().items()}
+    with pytest.raises(RuntimeError,match='Incompatible policy precision'):
+        target.load_model(path)
+    for name,value in target.policy.state_dict().items():
+        torch.testing.assert_close(value,before[name],rtol=0,atol=0)
+
+
 def test_incompatible_checkpoint_raises_instead_of_using_random_weights(tmp_path):
     checkpoint_path = tmp_path / 'invalid.pkl'
     torch.save({'unexpected': torch.ones(1)}, checkpoint_path)

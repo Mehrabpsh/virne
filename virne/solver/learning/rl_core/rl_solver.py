@@ -332,12 +332,21 @@ class RLSolver(Solver):
                 'simulation.p_net_setting_num_nodes',
             ),
             'policy': self.policy.state_dict(),
+            'policy_parameter_dtypes': self.policy_parameter_dtypes(),
             'optimizer': self.optimizer.state_dict(),
             # 'lr_scheduler_state_dict': self.lr_scheduler.state_dict()
         }
         checkpoint.update(self.get_additional_checkpoint_state())
         torch.save(checkpoint, checkpoint_fname)
         self.logger.critical(f'Save model to {checkpoint_fname}\n')
+
+    def policy_parameter_dtypes(self):
+        """Report actual module precision, including mixed actor/critic policies."""
+        result={name: sorted({str(parameter.dtype) for parameter in module.parameters()})
+                for name, module in self.policy.named_children()}
+        direct={str(parameter.dtype) for parameter in self.policy.parameters(recurse=False)}
+        if direct:result['<root>']=sorted(direct)
+        return result
 
     def get_additional_checkpoint_state(self):
         """Return algorithm-specific state stored alongside the main policy."""
@@ -369,6 +378,10 @@ class RLSolver(Solver):
                 optimizer_state = None
                 feature_schema_version = None
 
+            stored_dtypes=checkpoint.get('policy_parameter_dtypes')
+            if stored_dtypes is not None and stored_dtypes!=self.policy_parameter_dtypes():
+                raise ValueError('Incompatible policy precision: '
+                                 f'checkpoint={stored_dtypes}, configured={self.policy_parameter_dtypes()}')
             from virne.reliability.features import feature_signature
             expected_signature = feature_signature(self.config)
             stored_signature = checkpoint.get('reliability_feature_signature',

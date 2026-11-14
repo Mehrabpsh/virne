@@ -127,6 +127,7 @@ class BaseSystem:
         self._runtime_audit={'system':type(self).__name__,'training_requested':self.config.training.num_train_epochs>0,
                              'training_completed':False,'optimizer_updates':0}
         if isinstance(self.solver, RLSolver):
+            self._runtime_audit['policy_parameter_dtypes']=self.solver.policy_parameter_dtypes()
             self._runtime_audit['effective_repeat_times']=getattr(self.solver,'repeat_times',None)
             self._runtime_audit['reward_strategy']=self.config.rl.reward_calculator.name
             encoder=getattr(getattr(getattr(self.solver.policy,'actor',None),'encoder',None),'p_net_encoder',None)

@@ -25,6 +25,9 @@ nn:
   num_gnn_layers: 3
   dropout_prob: 0.0
   batch_norm: false
+  # DualGAT actor arithmetic; float64 avoids loss of action-score differences
+  # inside the network. Critic precision and legacy defaults stay float32.
+  actor_dtype: float32
 
 rl:
   gamma: 0.99

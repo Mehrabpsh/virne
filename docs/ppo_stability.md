@@ -54,6 +54,8 @@ is not a guarantee over unseen states or a theorem of convergence/SLA compliance
 Native Virne settings:
 
 ```yaml
+nn:
+  actor_dtype: float64  # DualGAT actor only; critic remains float32
 rl:
   learning_rate:
     actor: 0.0001
@@ -72,6 +74,7 @@ claimed optimal values. In experiment-v2 these can be set per PPO method:
 
 ```yaml
 overrides:
+  nn.actor_dtype: float64
   rl.learning_rate.actor: 0.0001
   rl.target_kl: 0.02
   rl.kl_guard.enabled: true
@@ -218,3 +221,58 @@ and fresh collection/guard checks on the same fixed weights/observations. Fresh
 checks cannot recover the original unsaved behavior distribution; they verify
 the corrected collection/reference path. A GPU pass does not establish
 50-epoch convergence, and no new full GPU simulation has been launched locally.
+
+## November 15: prevent precision loss inside the actor
+
+The next full run used `00f79ca` and the requested 99-job matrix. Original PPO
+seed 31 completed nine training epochs, then stopped in epoch 10 after 32,637
+accepted optimizer updates. No other training job or held-out evaluation ran.
+The largest accepted rollout mean KL was 0.019999973, below 0.02. Its recorded
+behavior check measured maximum per-state KL 1.0928958e-6, exceeding the 1e-6
+pre-update numerical budget. This is a different check from optimizer-step KL.
+
+The saved 33 observations match every collection fingerprint and policy version;
+the stored chosen-action log probabilities match their recorded logits exactly.
+Scores range from approximately 5,501 to 9,433. Computing KL in float64 after
+float32 network forwards does not recover differences already rounded away
+inside graph reductions and linear projections. At the same saved parameter
+values, full float64 CPU replay has maximum KL 2.3527581e-7 from recorded CUDA
+behavior and 6.5779247e-7 from saved CUDA batch replay. These two close
+approximations differ enough from each other to cross the strict pre-update
+budget. Merely relaxing that budget would retain the underlying precision loss.
+
+The prior 20-cycle GPU check passed at the earlier epoch-4 seed-37 state; it did
+not cover the later epoch-10 seed-31 state and was insufficient evidence of
+robustness across training. Full-run completion and convergence remain unproven.
+
+`nn.actor_dtype` now selects `float32` (legacy default) or `float64` for DualGAT.
+The full paired example explicitly uses float64 for both DualGAT PPO variants.
+The entire actor, including input projection, graph attention, pooling and score
+projection, runs in that dtype during collection, gradient updates and inference.
+Integer graph indices and action masks retain their types. Shared observations
+are not mutated; the critic and Cand-RL remain float32. Architecture, parameter
+names/shapes, objectives, physical rates and both KL limits are unchanged. This
+is a numerical execution change and may cost GPU time; its GPU cost is not yet
+measured. Changing dtype alters finite-precision trajectories, so a fresh run is
+required for comparison rather than appending to the failed experiment.
+
+Runtime audits and new checkpoints record actual per-module parameter dtypes.
+Loading a new checkpoint with inconsistent configured precision fails before
+weights are loaded, preventing evaluation from silently changing its arithmetic.
+Historical checkpoints without precision metadata remain loadable as before.
+
+The frozen-state tool now also checks original recorded behavior when present:
+
+```bash
+python -m scripts.thesis.diagnose_ppo_snapshot \
+  --snapshot /path/to/new/logs/ppo_rollout_mismatch.pt \
+  --actor-dtype float64 --device cuda --repeats 20 \
+  --output /path/to/new_fp64_probe.json
+```
+
+The CPU check of the new state passed its original recorded-distribution check
+and 20 fresh cycles; maximum fresh per-state KL was 8.13e-17. This is frozen
+inference with no optimizer updates. Tests separately exercise mixed-precision
+native training, checkpoint save/reload, both frozen evaluation modes, strict
+precision mismatch rejection and large common score offsets. GPU replay and
+long-run GPU training are still required; no GPU simulation was launched here.

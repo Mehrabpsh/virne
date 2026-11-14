@@ -49,15 +49,30 @@ class BiDeepEdgeFeatureGatWithCostAndLambdaActorCritic(_make_advanced_actor_crit
 
 
 class Actor(nn.Module):
-    def __init__(self, p_net_num_nodes, p_net_x_dim, p_net_edge_dim, v_net_x_dim, v_net_edge_dim, embedding_dim=128, dropout_prob=0., batch_norm=False, num_layers=3, gnn_class=GCNConvNet, v_gnn_class=None, p_gnn_class=None, **kwargs):
+    def __init__(self, p_net_num_nodes, p_net_x_dim, p_net_edge_dim, v_net_x_dim, v_net_edge_dim, embedding_dim=128, dropout_prob=0., batch_norm=False, num_layers=3, gnn_class=GCNConvNet, v_gnn_class=None, p_gnn_class=None, actor_dtype='float32', **kwargs):
         super().__init__()
+        if actor_dtype not in ('float32', 'float64'):
+            raise ValueError('DualGNN actor_dtype must be float32 or float64')
         # Remove gnn_class from kwargs to avoid duplicate propagation
         kwargs = {k: v for k, v in kwargs.items() if k != 'gnn_class'}
         v_gnn_class = v_gnn_class or gnn_class
         p_gnn_class = p_gnn_class or gnn_class
         self.encoder = BiGnnBaseModel(p_net_num_nodes, p_net_x_dim, p_net_edge_dim, v_net_x_dim, v_net_edge_dim, embedding_dim=embedding_dim, dropout_prob=dropout_prob, batch_norm=batch_norm, num_layers=num_layers, gnn_class=gnn_class, v_gnn_class=v_gnn_class, p_gnn_class=p_gnn_class, **kwargs)
+        self.encoder.to(dtype=getattr(torch, actor_dtype))
 
     def forward(self, obs):
+        # Casting the final logits cannot recover precision already lost in
+        # graph reductions and linear projections. Run the complete actor at
+        # its configured precision. Keep the shared observation/critic inputs
+        # intact, and retain integer graph indices and node identifiers.
+        dtype = next(self.encoder.parameters()).dtype
+        if any(obs[key].x.dtype != dtype for key in ('p_net', 'v_net')):
+            obs = dict(obs)
+            for key in ('p_net', 'v_net'):
+                obs[key] = obs[key].clone().apply(
+                    lambda value: value.to(dtype=dtype)
+                    if isinstance(value, torch.Tensor) and value.is_floating_point() else value
+                )
         return self.encoder(obs)
 
 
