@@ -117,11 +117,22 @@ class InstanceAgent(object):
         instance_obs, _ = instance_env.reset()
         instance_truncated = False
         while True:
+            record_behavior=getattr(self,'record_ppo_behavior',False)
+            if record_behavior:
+                # Freeze the observation before the environment can advance.
+                # Both the action forward and replay use this same snapshot.
+                from .ppo_stability import observation_digest
+                instance_obs=copy.deepcopy(instance_obs)
+                signature=observation_digest(instance_obs)
             tensor_instance_obs = self.preprocess_obs(instance_obs, self.device)
 
             time_a = time.time()
             action, action_logprob = self.select_action(tensor_instance_obs, sample=True)
             time_b = time.time()
+            behavior_record=None
+            if record_behavior:
+                behavior_record={'logits':self._last_ppo_behavior_logits.squeeze(0),
+                                 'observation_sha256':signature,'update_time':int(self.update_time)}
 
             if instance_env.curr_v_node_id == 0:
                 feature_time = time_b - time_a
@@ -145,6 +156,7 @@ class InstanceAgent(object):
                 action_logprob,
                 value=value,
                 next_obs=next_instance_obs,
+                behavior_record=behavior_record,
             )
             # instance_buffer.action_masks.append(mask if isinstance(mask, np.ndarray) else mask.cpu().numpy())
 

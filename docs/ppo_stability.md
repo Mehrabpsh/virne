@@ -39,7 +39,8 @@ The exact chain that produced each historical model is not established.
   Adam timesteps advance only for accepted updates. The reference distribution
   remains fixed across all minibatches of one rollout.
 - The guard defaults off to retain existing update behavior. It currently
-  requires single-worker deterministic forwards (dropout=0, batch_norm=false).
+  requires single-worker training with dropout=0 and batch_norm=false. These
+  settings do not guarantee bitwise-identical CUDA arithmetic.
   No observation dimensions, action candidates, mapping rules, SLA calculation,
   rewards, or reliability objectives are changed.
 
@@ -158,3 +159,62 @@ observations, actions, stored/replayed distributions and precision metadata.
 Failed training now also finalizes runtime update counts, policy hashes and
 guard statistics instead of retaining the initialization-time zero-update audit.
 GPU validation of this new verification path is still required.
+
+## November 14 exact failure-state diagnosis and recorded behavior
+
+The seed-37 50-epoch follow-up stopped in its fourth epoch after 12,529 accepted
+updates. The prior single-observation recheck succeeded 23 times, then both
+replay paths exceeded the absolute selected-log-probability tolerance. Saved
+batch error was 0.00146675; single error was 0.00124884. All accepted rollout
+mean KL values stayed below 0.02 (maximum 0.01999912). The run selected only
+training seed 37 and therefore planned 57 jobs; other methods/evaluations were
+not reached.
+
+The exact failing policy and 35 observations can now be replayed without any
+optimizer update. Raw logits are approximately 7,127--9,043, where float32
+spacing is approximately 0.000488--0.000977, close to the absolute 0.001 check.
+CPU float32 replay has maximum stored-action error 0.00096226; CPU float64
+replay has maximum error 0.00099513. The saved CUDA forwards exceed 0.001.
+The same fixed weights/observations therefore produce different pass/fail
+outcomes depending on numerical execution. The check was too dependent on
+reconstructing the old policy with a later floating-point forward. The snapshot
+does not retain original complete collection distributions or observation
+fingerprints, so these comparisons cannot independently exclude every possible
+collection-time mutation or prove the kernel-level source of the original error.
+
+Guarded training now freezes each raw observation before action collection and
+records its fingerprint, the policy update counter, and the actual normalized
+masked logits used to compute that action's log probability. Those records
+follow their observations through buffer merging, subsetting and trimming.
+Before any update, the guard requires matching observation fingerprints and
+policy versions, and exact equality between stored chosen-action probabilities
+and their corresponding recorded logits. It then checks maximum per-state
+KL(recorded behavior||current replay) against the existing 1e-6 numerical budget.
+The fixed old-policy reference is the recorded distribution, not a reconstructed
+forward. KL accumulation uses float64; network weights/forwards remain float32.
+
+The 0.001 selected-action replay error remains a diagnostic, not the acceptance
+criterion on the recorded path. Missing, stale or altered experience and
+material full-distribution disagreement still abort and save the failure state.
+The optimizer-step target remains rollout mean KL <= 0.02. No reward, SLA,
+physical rate, observation dimension or network parameter layout changes.
+Guard-disabled configurations retain their existing collection path; existing
+model/optimizer checkpoints are compatible. No rollout buffer is checkpointed.
+
+Runtime audits add `recorded_behavior_rollouts`, `verified_roundoff_rollouts`
+and `max_preupdate_behavior_state_kl`. The old single-replay count is retained
+for compatibility; production guarded collection now uses recorded behavior.
+
+For a fast frozen-state CPU/CUDA check, without training or a new simulation:
+
+```bash
+python -m scripts.thesis.diagnose_ppo_snapshot \
+  --snapshot /path/to/logs/ppo_rollout_mismatch.pt \
+  --device cuda --repeats 20 --output /path/to/new_probe.json
+```
+
+The probe separately reports replay error against original stored probabilities
+and fresh collection/guard checks on the same fixed weights/observations. Fresh
+checks cannot recover the original unsaved behavior distribution; they verify
+the corrected collection/reference path. A GPU pass does not establish
+50-epoch convergence, and no new full GPU simulation has been launched locally.

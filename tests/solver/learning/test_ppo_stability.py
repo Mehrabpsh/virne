@@ -9,7 +9,7 @@ import torch
 from omegaconf import OmegaConf
 
 from virne.solver.learning.rl_core.instance_agent import InstanceAgent
-from virne.solver.learning.rl_core.ppo_stability import PPOUpdateGuard, validate_settings
+from virne.solver.learning.rl_core.ppo_stability import PPOUpdateGuard, validate_settings, observation_digest
 from virne.solver.learning.rl_core.rl_solver import RLSolver
 from virne.solver.learning.utils import categorical_from_logits, apply_mask_to_logit
 
@@ -179,6 +179,89 @@ def test_replay_checks_unselected_actions_too():
     with pytest.raises(ValueError,match='before this rollout'):
         PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw)
     assert not solver.optimizer.state
+
+
+def recorded_fixture():
+    solver,obs,actions,old=fixture(lr=.1)
+    solver.update_time=0
+    raw=[{'action_mask':mask.unsqueeze(0).clone(),'feature':np.array([1.],dtype=np.float32)}
+         for mask in obs['action_mask']]
+    solver.preprocess_obs=lambda observation,device:observation
+    with torch.no_grad():
+        logits=categorical_from_logits(apply_mask_to_logit(solver.policy.act(obs),obs['action_mask'])).logits
+    records=[{'logits':row.clone(),'update_time':0,'observation_sha256':observation_digest(observation)}
+             for row,observation in zip(logits,raw)]
+    return solver,obs,actions,old,raw,records
+
+
+def test_recorded_behavior_allows_bounded_roundoff_even_if_single_replay_exceeds_logprob_threshold():
+    solver,obs,actions,old,raw,records=recorded_fixture()
+    act=solver.policy.act
+    solver.policy.act=lambda item:act(item)+torch.tensor([[.002,0.,0.]])
+    # Both single and batch replay differ from collection: the old check aborts.
+    with pytest.raises(ValueError,match='before this rollout'):
+        PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw)
+    guard=PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw,behavior_records=records)
+    assert guard.consistency['verified_roundoff']
+    assert guard.consistency['recorded_behavior_reference']
+    assert guard.consistency['behavior_max_state_kl']<=1e-6
+    _,decision=guard.step(clipped_actor_loss(solver,obs,actions,old))
+    assert decision['accepted'] and decision['exact_kl']<=.02
+
+
+@pytest.mark.parametrize('corruption',['observation','policy_version','chosen_probability','missing_record'])
+def test_recorded_behavior_rejects_corrupted_or_stale_experience(corruption,tmp_path):
+    solver,obs,actions,old,raw,records=recorded_fixture()
+    solver.log_dir=str(tmp_path)
+    if corruption=='observation':raw[0]['feature'][0]=2.
+    elif corruption=='policy_version':records[0]['update_time']=-1
+    elif corruption=='chosen_probability':old=old+.01
+    else:records.pop()
+    with pytest.raises(ValueError,match='Invalid PPO behavior rollout'):
+        PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw,behavior_records=records)
+    snapshot=torch.load(tmp_path/'ppo_rollout_mismatch.pt',weights_only=True)
+    assert snapshot['behavior_records'] is not None
+    assert not solver.optimizer.state
+
+
+def test_recorded_behavior_rejects_full_distribution_change_even_when_chosen_probability_matches():
+    solver,obs,actions,old,raw,records=recorded_fixture()
+    obs['action_mask'][:]=True
+    for observation in raw:observation['action_mask'][:]=True
+    old_logits=torch.tensor([[.2,.4,.4]]).log().expand(2,-1)
+    actions=torch.tensor([0,0]);old=old_logits[:,0]
+    for i,record in enumerate(records):
+        record['logits']=old_logits[i]
+        record['observation_sha256']=observation_digest(raw[i])
+    solver.policy.act=lambda item:torch.tensor([[.2,.79,.01]]).log().expand(len(item['action_mask']),-1)
+    with pytest.raises(ValueError,match='materially differs'):
+        PPOUpdateGuard(solver,obs,actions,old,raw_observations=raw,behavior_records=records)
+    assert not solver.optimizer.state
+
+
+def test_collection_freezes_observation_before_environment_step_and_records_actual_distribution():
+    solver,_,_,_=fixture()
+    state={'action_mask':torch.tensor([[True,True,False]]),'feature':np.array([1.],dtype=np.float32)}
+    class Env:
+        curr_v_node_id=0
+        solution={'result':True}
+        def reset(self):return state,{}
+        def step(self,action):
+            state['feature'][0]=99.
+            return {'next':True},1.,True,False,{}
+    solver.InstanceEnv=lambda *args:Env()
+    solver.preprocess_obs=lambda obs,device:obs
+    solver.device=torch.device('cpu');solver.update_time=0
+    solver.record_ppo_behavior=True
+    solver.estimate_value=lambda obs:0.
+    solver._get_bootstrap_value=lambda *args:0.
+    solver.controller=solver.recorder=solver.counter=solver.logger=None
+    _,buffer,_=InstanceAgent.learn_with_instance(solver,{'p_net':None,'v_net':None})
+    assert state['feature'][0]==99.
+    assert buffer.observations[0]['feature'][0]==1.
+    record=buffer.behavior_records[0]
+    assert record['observation_sha256']==observation_digest(buffer.observations[0])
+    assert float(record['logits'][buffer.actions[0]])==float(buffer.logprobs[0][0])
 
 
 @pytest.mark.parametrize('clip',[True,False])

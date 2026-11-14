@@ -73,9 +73,10 @@ rl:
     enabled: false
     max_backtracks: 4
     backtrack_factor: 0.5
+    # Diagnostic replay threshold; guarded training validates recorded
+    # probabilities exactly and checks full-distribution KL instead.
     rollout_logprob_atol: 0.001
-    # On a batch mismatch, verify the collection path and every state's
-    # complete distribution before accepting negligible batching roundoff.
+    # Maximum pre-update state KL versus the recorded behavior distribution.
     rollout_distribution_kl_atol: 0.000001
   gae_lambda: 0.98
   repeat_times: 10

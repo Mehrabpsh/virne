@@ -170,6 +170,8 @@ def test_guarded_native_training_records_real_accepted_steps(tmp_path,method):
         assert audit['optimizer_updates']==measured['accepted_updates']>0
         assert 0<=measured['max_accepted_exact_kl']<=measured['target_kl']
         assert measured['optimizer_learning_rates'][0]==.0001
+        assert measured['recorded_behavior_rollouts']>0
+        assert measured['max_preupdate_behavior_state_kl']<=1e-6
         assert audit['policy_sha256_before']!=audit['policy_sha256_after']
         checkpoint=torch.load(Path(cfg.logger.runtime_audit_path).parent/'models/model.pkl',weights_only=False)
         assert checkpoint['policy'] and checkpoint['optimizer']['state']

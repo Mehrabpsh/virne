@@ -6,6 +6,7 @@ optimizer state before trying a smaller step. Rewards and action semantics are
 unchanged; legacy configurations keep their existing update path.
 """
 import copy
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -15,6 +16,27 @@ import numpy as np
 import torch
 
 from ..utils import apply_mask_to_logit, categorical_from_logits
+
+
+def observation_digest(observation):
+    """Bind a behavior distribution to the raw input used for its forward."""
+    digest=hashlib.sha256()
+    def add(value):
+        if isinstance(value,torch.Tensor):value=value.detach().cpu().numpy()
+        if isinstance(value,np.ndarray):
+            value=np.ascontiguousarray(value)
+            digest.update(b'array'+repr((value.shape,value.dtype.str)).encode()+value.tobytes())
+        elif isinstance(value,dict):
+            digest.update(b'dict')
+            for key in sorted(value):add(key);add(value[key])
+        elif isinstance(value,(list,tuple)):
+            digest.update(b'sequence'+str(len(value)).encode())
+            for item in value:add(item)
+        else:
+            if isinstance(value,np.generic):value=value.item()
+            digest.update((type(value).__name__+':'+repr(value)+';').encode())
+    add(observation)
+    return digest.hexdigest()
 
 
 def validate_settings(config):
@@ -40,24 +62,31 @@ def validate_settings(config):
     if config.training.get('distributed_training',False):
         raise ValueError('rl.kl_guard currently requires single-worker training')
     if config.nn.get('batch_norm',False) or config.nn.get('dropout_prob',0)!=0:
-        raise ValueError('rl.kl_guard requires deterministic policy forwards: batch_norm=false and dropout_prob=0')
+        raise ValueError('rl.kl_guard requires batch_norm=false and dropout_prob=0')
 
 
 class PPOUpdateGuard:
-    def __init__(self,solver,observations,actions,stored_logprobs,raw_observations=None):
+    def __init__(self,solver,observations,actions,stored_logprobs,raw_observations=None,behavior_records=None):
         validate_settings(solver.config)
         self.solver=solver
         self.observations=observations
         self.target=float(solver.config.rl.target_kl)
         self.settings=solver.config.rl.kl_guard
         self.diagnostics=[]
+        self.behavior_records=behavior_records
         self.consistency={'batched_logprob_max_error':0.,'single_logprob_max_error':None,
-                          'batching_max_state_kl':None,'single_recheck':False}
+                          'batching_max_state_kl':None,'single_recheck':False,
+                          'recorded_behavior_reference':False,'behavior_max_state_kl':None,
+                          'verified_roundoff':False}
         with torch.no_grad():
             self.reference=self.distribution()
+            self.preupdate_distribution=self.reference
             recomputed=self.reference.log_prob(actions)
             error=(stored_logprobs-recomputed).abs().max()
             self.consistency['batched_logprob_max_error']=float(error)
+            if behavior_records is not None:
+                self.use_recorded_behavior(actions,stored_logprobs,raw_observations)
+                return
             if not torch.isfinite(error) or error>self.settings.rollout_logprob_atol:
                 # Collection forwards one graph at a time. A larger PyG batch
                 # can change float32 reduction order, especially on CUDA. Verify
@@ -88,6 +117,41 @@ class PPOUpdateGuard:
                                  f'max error {float(error):.6g}; consistency={self.consistency}; '
                                  f'check observation mutation, batching and policy mode; snapshot={snapshot}')
 
+    def use_recorded_behavior(self,actions,stored_logprobs,raw_observations):
+        """Validate recorded data directly, then bound complete distribution drift.
+
+        Selected-action replay error is diagnostic only on this path: unlike a
+        reconstructed old policy, recorded probabilities do not require a later
+        floating-point forward to reproduce the collection kernel bit for bit.
+        """
+        def fail(reason):
+            snapshot=self.save_mismatch(actions,stored_logprobs,raw_observations,None)
+            raise ValueError(f'Invalid PPO behavior rollout before optimizer steps: {reason}; '
+                             f'consistency={self.consistency}; snapshot={snapshot}')
+        records=self.behavior_records
+        if raw_observations is None or len(records)!=actions.numel() or len(raw_observations)!=len(records):
+            fail('missing or misaligned recorded distributions/observations')
+        for record,obs in zip(records,raw_observations):
+            if record['update_time']!=int(self.solver.update_time):
+                fail('stale behavior policy version')
+            if observation_digest(obs)!=record['observation_sha256']:
+                fail('observation changed after action collection')
+        old_logits=torch.stack([record['logits'] for record in records]).to(actions.device)
+        if old_logits.shape!=self.reference.logits.shape:
+            fail('recorded action-distribution shape differs from replay')
+        selected=old_logits.gather(-1,actions.reshape(-1,1)).squeeze(-1)
+        if not torch.isfinite(selected).all() or not torch.equal(selected,stored_logprobs):
+            fail('stored chosen-action probability differs from its recorded distribution')
+        # Keep the recorded normalized logits as the old policy. Float64 KL
+        # accumulation avoids cancellation when the two distributions are close.
+        self.reference=torch.distributions.Categorical(logits=old_logits.double())
+        self.consistency['recorded_behavior_reference']=True
+        _,maximum=self.kl(self.reference,self.preupdate_distribution)
+        self.consistency['behavior_max_state_kl']=maximum
+        if not math.isfinite(maximum) or maximum>self.settings.get('rollout_distribution_kl_atol',1e-6):
+            fail('replayed distribution materially differs from recorded behavior')
+        self.consistency['verified_roundoff']=self.consistency['batched_logprob_max_error']>self.settings.rollout_logprob_atol
+
     def distribution(self,observations=None):
         observations=self.observations if observations is None else observations
         logits=self.solver.policy.act(observations)
@@ -101,6 +165,8 @@ class PPOUpdateGuard:
         # Work in log space so tiny but valid action probabilities do not
         # underflow to zero before their log ratio is evaluated. Masked actions
         # have zero old mass and contribute zero, including -inf - -inf entries.
+        reference=torch.distributions.Categorical(logits=reference.logits.double())
+        latest=torch.distributions.Categorical(logits=latest.logits.double())
         delta=torch.where(reference.probs>0,reference.logits-latest.logits,0.)
         values=(reference.probs*delta).sum(-1).clamp_min(0)
         return float(values.mean()),float(values.max())
@@ -127,7 +193,9 @@ class PPOUpdateGuard:
                 'optimizer':self.solver.optimizer.state_dict(),
                 'config':OmegaConf.to_container(self.solver.config,resolve=True),
                 'observations':raw_observations,'actions':actions,'stored_logprobs':stored_logprobs,
-                'batched_logits':self.reference.logits,
+                'behavior_records':self.behavior_records,
+                'behavior_logits':self.reference.logits if self.consistency['recorded_behavior_reference'] else None,
+                'batched_logits':self.preupdate_distribution.logits,
                 'single_logits':None if replay is None else replay.logits,
                 'consistency':self.consistency,'update_time':getattr(self.solver,'update_time',None),
                 'training_epoch_id':getattr(self.solver,'training_epoch_id',None),

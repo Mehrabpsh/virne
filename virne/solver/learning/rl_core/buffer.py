@@ -12,7 +12,7 @@ class RolloutBuffer:
         self.curr_idx = 0
         self.basic_items = ['observations', 'actions', 'rewards', 'dones', 'next_observations', 'logprobs', 'values']
         self.calc_items = ['advantages', 'returns']
-        self.extend_items = ['hidden_states', 'cell_states', 'action_mask', 'entropies']
+        self.extend_items = ['hidden_states', 'cell_states', 'action_mask', 'entropies', 'behavior_records']
         self.reset()
 
     @property
@@ -33,7 +33,7 @@ class RolloutBuffer:
     def size(self):
         return len(self.logprobs)
 
-    def add(self, obs, action, raward, done, logprob, value=None, next_obs=None):
+    def add(self, obs, action, raward, done, logprob, value=None, next_obs=None, behavior_record=None):
         self.observations.append(obs)
         self.actions.append(action)
         self.rewards.append(raward)
@@ -41,6 +41,7 @@ class RolloutBuffer:
         self.logprobs.append(logprob)
         self.values.append(value)
         self.next_observations.append(next_obs)
+        if behavior_record is not None:self.behavior_records.append(behavior_record)
         self.curr_idx += 1
         if hasattr(self, 'use_prioritized') and self.use_prioritized:
             transition = (obs, action, raward, next_obs, done)
