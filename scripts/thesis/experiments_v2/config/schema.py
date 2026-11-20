@@ -121,12 +121,13 @@ def validate(data):
         require(isinstance(method.get('solver'),str),f'{name}.solver is required')
         require(method.get('kind','auto') in ('auto','learned','heuristic'),f'{name}: invalid kind')
     require(isinstance(data['metrics'],list) and bool(data['metrics']) and len(set(data['metrics']))==len(data['metrics']),'metrics must be a nonempty unique list')
-    keys(data['reporting'],['plots','formats','generate_markdown_report','assessment_beta'],'reporting')
+    keys(data['reporting'],['plots','formats','generate_markdown_report','assessment_beta','sla_economic_beta'],'reporting')
     for flag in ('plots','generate_markdown_report'):
         require(isinstance(data['reporting'].get(flag),bool),f'reporting.{flag} must be boolean')
     formats=data['reporting'].get('formats')
     require(isinstance(formats,list) and bool(formats) and set(formats)<= {'png','pdf'},'reporting.formats must contain png/pdf')
     positive(data['reporting'].get('assessment_beta'),'reporting.assessment_beta')
+    positive(data['reporting'].get('sla_economic_beta',data['reporting']['assessment_beta']),'reporting.sla_economic_beta')
     calibration=data.get('calibration',{})
     keys(calibration,['methods','seeds','requests','search_space','criteria','beta_suggestion','adopt_beta_for',
                       'reliability_scenarios','require_qualified'],'calibration')

@@ -69,11 +69,15 @@ def result_interpretations(observations):
     return result
 
 
-def run(bundle,resolved,summary,manifest,validation):
+def run(bundle,resolved,summary,manifest,validation,*,sla_economic_beta=None):
+    from .sla_economics import PRIMARY, DESCRIPTION, prepare_report, plot_report, comparison_table
     bundle=Path(bundle);out=bundle/'reports'
-    render_html(bundle,resolved,summary,manifest,validation)
-    frame=pd.read_csv(bundle/'aggregated/results_summary.csv')
-    metrics=resolved['experiment']['metrics']
+    economics=prepare_report(bundle,resolved,manifest,beta_override=sla_economic_beta)
+    plot_report(bundle,resolved,economics)
+    render_html(bundle,resolved,summary,manifest,validation,economics=economics)
+    frame=economics['aggregate']
+    metrics=list(resolved['experiment']['metrics'])
+    if PRIMARY+'_mean' in frame and PRIMARY not in metrics:metrics.append(PRIMARY)
     table=''
     for mode,group in mode_groups(frame):
         active_metrics=mode_metrics(metrics,mode)
@@ -82,6 +86,15 @@ def run(bundle,resolved,summary,manifest,validation):
         for _,row in group.iterrows():table+='| '+str(row.label)+' | '+' | '.join('NaN' if pd.isna(row[m+'_mean']) else f'{row[m+"_mean"]:.6g}' for m in active_metrics)+' |\n'
         table+='\n'
     plots=sorted((bundle/'plots').glob('*')) if (bundle/'plots').exists() else []
+    payment_table=''
+    for mode,group in mode_groups(comparison_table(economics)):
+        columns=[c for c in group if c!='evaluation_mode']
+        if not columns:continue
+        if mode is not None:payment_table+='#### '+mode+'\n\n'
+        payment_table+='| '+' | '.join(columns)+' |\n| '+' | '.join('---' for _ in columns)+' |\n'
+        for _,row in group.iterrows():
+            payment_table+='| '+' | '.join('NaN' if pd.isna(row[c]) else f'{row[c]:.6g}' if isinstance(row[c],(float,int)) else str(row[c]) for c in columns)+' |\n'
+        payment_table+='\n'
     hardware=json.loads((bundle/'hardware.json').read_text())
     text=('# Thesis Experiment Framework v2 — preliminary pipeline validation\n\n'
           '**Engineering validation only. Objective, reward, beta, comparator settings and scientific budgets remain unfrozen.**\n\n'
@@ -96,6 +109,13 @@ def run(bundle,resolved,summary,manifest,validation):
           '## Calibration provenance\n\n```yaml\n'+yaml.safe_dump({'result':resolved['experiment'].get('calibration_result'),
               'suggestions':resolved['experiment'].get('calibration_suggestions'),'overridden_values':resolved['calibrated_overrides']},sort_keys=False)+'```\n\n'
           '## Metrics\n\n'+table+'\n'+STATS+'\n\n'
+          '### SLA-adjusted Time R/C\n\n'+DESCRIPTION+'\n\n'
+          f'Common payment beta: **{economics["beta"]:.17g}**. Computed evaluations: **{economics["completed"]}/{len(economics["observations"])}**. '
+          'Missing inputs remain unmeasured/null. '
+          '[Per-run payment metrics](sla_economics_per_run.csv), [payment summaries](sla_economics_summary.csv), '
+          '[per-service payment audit](sla_economics_services.csv.gz), [calculation provenance](sla_economics_provenance.json). '
+          'These report-derived outputs leave the frozen records, configs and original aggregates unchanged.\n\n'
+          +payment_table+
           'Virne Counter definitions are retained, including average R2C over all arrivals. SLA means use accepted services; '
           'SLA service rate uses all arrivals. Baseline reliability/SLA remain disabled in the solver; recorded mappings '
           'are assessed post hoc in the common world using the frozen evaluator. The configurable assessment_beta is '
@@ -111,14 +131,16 @@ def run(bundle,resolved,summary,manifest,validation):
           'Weibull/history assumptions are provisional; no exact Paper-9 reproduction or scientific superiority is claimed. '
           'Training completion and policy updates do not establish convergence.\n\n'
           '## Figures\n\n'+''.join(f'- [{p.name}](../plots/{p.name})\n' for p in plots if p.suffix in ('.png','.pdf')))
-    interpretations=result_interpretations(read_csv(bundle/'aggregated/results_long.csv'))
+    interpretations=result_interpretations(economics['observations'])
     text+='\n## Interpretation of finalized results\n\n'+''.join('### '+r.get('evaluation_mode','legacy')+' / '+r['method']+'\n\n'+r['interpretation']+'\n\n' for r in interpretations)
     text+='Predicted SLA compliance and empirical uptime are separate measurements. Request rejections are not component failures. '
-    text+=evaluation_description(read_csv(bundle/'aggregated/results_long.csv'),resolved)+' '
+    text+=evaluation_description(economics['observations'],resolved)+' '
     text+='Live evaluation retains reservations and waits for repair; it performs no retraining or automatic rerouting.\n'
     if resolved['experiment']['reporting']['generate_markdown_report']:(out/'experiment_report.md').write_text(text)
     write_json(out/'experiment_report.json',{'hardware':hardware,'execution_summary':summary,'resolved_config':resolved,
-               'manifest':manifest,'validation':validation,'statistics_semantics':STATS,'results':frame.to_dict('records')})
+               'manifest':manifest,'validation':validation,'statistics_semantics':STATS,'results':frame.to_dict('records'),
+               'sla_economics':{'beta':economics['beta'],'definition':DESCRIPTION,'computed_evaluations':economics['completed'],
+                                'missing_inputs':economics['missing'],'provenance':'sla_economics_provenance.json'}})
 
 
 def read_json(path,default=None):
@@ -131,10 +153,12 @@ def read_csv(path):
     except pd.errors.EmptyDataError:return pd.DataFrame()
 
 
-def render_html(bundle,resolved,summary,manifest,validation=None):
-    """Render existing artifacts only; never launch jobs or reaggregate metrics."""
+def render_html(bundle,resolved,summary,manifest,validation=None,*,economics=None,sla_economic_beta=None):
+    """Render existing records and derived payments; never rewrite frozen aggregation."""
     from ..execution.planner import system_mode
+    from .sla_economics import DESCRIPTION, prepare_report, comparison_table
     bundle=Path(bundle).resolve();out=bundle/'reports';out.mkdir(exist_ok=True)
+    if economics is None:economics=prepare_report(bundle,resolved,manifest,beta_override=sla_economic_beta)
     esc=lambda value:html.escape(str(value),quote=True)
     def table(frame):
         if frame.empty:return '<p class="muted">No observations available.</p>'
@@ -148,7 +172,8 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
         from urllib.parse import quote
         return '<a href="'+quote(relative,safe='/')+'">'+esc(os.path.relpath(path,bundle))+'</a>'
     validation=validation or read_json(out/'validation_report.json',{'passed':False,'warnings':['Validation unavailable'],'hard_errors':[]})
-    aggregate=read_csv(bundle/'aggregated/results_summary.csv')
+    aggregate=economics['aggregate']
+    observations=economics['observations']
     planned=summary.get('jobs',[]);by_id={r['run_id']:r for r in manifest}
     failed=read_json(bundle/'FAILED.json',{})
     statuses=[]
@@ -189,7 +214,8 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
     diagnostics=[];training_links=[]
     for entry in manifest:
         if entry['phase']!='train':continue
-        directory=Path(entry['run_directory'])
+        from .sla_economics import job_directory
+        directory=job_directory(bundle,entry)
         audit=read_json(directory/'runtime_system.json',{})
         diagnostics.append({'method':entry['method'],'run_id':entry['run_id'],**audit})
         telemetry=directory/'logs/training_info.csv'
@@ -206,13 +232,17 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
         columns=[c for c in aggregate if c in ('evaluation_mode','method','label','category') or any(token in c for token in tokens)]
         return table(aggregate[columns]) if columns else table(pd.DataFrame())
     def finalized_runs(tokens):
-        observations=read_csv(bundle/'aggregated/results_long.csv')
         columns=[c for c in observations if c in ('evaluation_mode','method','train_seed','eval_seed') or
                  (pd.api.types.is_numeric_dtype(observations[c]) and any(token in c for token in tokens))]
         return '<h3>Finalized per-run observations</h3>'+table(observations[columns]) if columns else ''
-    section(5,'Economic Evaluation',metric_table(['acceptance','r2c','revenue','cost'])+
+    section(5,'Economic Evaluation','<h3>SLA-adjusted Time R/C</h3><p>'+esc(DESCRIPTION)+'</p>'+
+        dump({'common_payment_beta':economics['beta'],'computed_evaluations':economics['completed'],
+              'requested_evaluations':len(observations),'missing_inputs':economics['missing']})+
+        '<p>Derived payment CSVs and provenance: '+', '.join(link(out/name) for name in
+            ('sla_economics_per_run.csv','sla_economics_summary.csv','sla_economics_services.csv.gz','sla_economics_provenance.json')
+            if (out/name).is_file())+'</p>'+table(comparison_table(economics))+
+        '<h3>Complete economic statistics</h3>'+metric_table(['acceptance','r2c','revenue','cost'])+
         finalized_runs(['revenue','cost'])+images([p for p in figures if any(k in p.name for k in ('acceptance','r2c'))]))
-    observations=read_csv(bundle/'aggregated/results_long.csv')
     interpretation_frame=pd.DataFrame(result_interpretations(observations))
     live=resolved['experiment']['protocol']['evaluation'].get('live_failures',{}).get('enabled',False)
     live_body=''
@@ -236,14 +266,15 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
         finalized_runs(['utilization','inservice','consumption','resource'])+
         '<p>Only finalized metrics present in the existing aggregation are shown. Unconfigured metrics are not inferred.</p>')
     section(8,'Aggregated Statistics','<p>'+esc(STATS)+'</p>'+table(aggregate)+
-        '<h3>Across training seeds</h3>'+table(read_csv(bundle/'aggregated/results_by_train_seed.csv'))+
-        '<h3>Across evaluation seeds</h3>'+table(read_csv(bundle/'aggregated/results_by_eval_seed.csv'))+
-        '<h3>Paired differences by evaluation seed</h3>'+table(read_csv(bundle/'aggregated/paired_differences_by_eval_seed.csv'))+
-        '<h3>Matched mode differences: live minus failure-free</h3>'+table(read_csv(bundle/'aggregated/paired_evaluation_modes.csv')))
+        '<h3>Across training seeds</h3>'+table(economics.get('by_train',read_csv(bundle/'aggregated/results_by_train_seed.csv')))+
+        '<h3>Across evaluation seeds</h3>'+table(economics.get('by_eval',read_csv(bundle/'aggregated/results_by_eval_seed.csv')))+
+        '<h3>Paired differences by evaluation seed</h3>'+table(economics.get('paired',read_csv(bundle/'aggregated/paired_differences_by_eval_seed.csv')))+
+        '<h3>Matched mode differences: live minus failure-free</h3><p>'+esc(DESCRIPTION)+'</p>'+
+        table(economics.get('paired_modes',read_csv(bundle/'aggregated/paired_evaluation_modes.csv'))))
     section(9,'Validation / Fairness Checks',dump(validation)+
         '<p>Environment fingerprint, scenario fairness, checkpoint reload, resource release and aggregation checks are taken from the existing validator.</p>')
     artifacts=[p for p in bundle.rglob('*') if p.is_file() and ('framework_source' not in p.parts and 'matplotlib_cache' not in p.parts)
-               and (p.suffix in ('.csv','.json','.yaml','.pkl','.png','.pdf','.patch','.sh','.tsv') or p.name in ('source_commit.txt','source_status.txt','COMPLETE.txt') or p.name.startswith('events.out.tfevents'))]
+               and (p.suffix in ('.csv','.json','.yaml','.pkl','.png','.pdf','.patch','.sh','.tsv') or p.name.endswith('.csv.gz') or p.name in ('source_commit.txt','source_status.txt','COMPLETE.txt') or p.name.startswith('events.out.tfevents'))]
     section(10,'Artifact Index','<ul>'+''.join('<li>'+link(p)+'</li>' for p in sorted(artifacts))+'</ul>')
     template=(Path(__file__).parent/'templates/experiment.html').read_text()
     from string import Template
@@ -254,19 +285,21 @@ def render_html(bundle,resolved,summary,manifest,validation=None):
     return out/'experiment_report.html'
 
 
-def regenerate(bundle):
+def regenerate(bundle,*,sla_economic_beta=None):
     """Read a frozen v2 bundle; do not resolve input again or execute any jobs."""
     bundle=Path(bundle).resolve()
     resolved=yaml.safe_load((bundle/'resolved_config.yaml').read_text())
     summary=yaml.safe_load((bundle/'execution_summary.yaml').read_text())
     manifest=read_json(bundle/'manifest.json',[])
     validation=read_json(bundle/'reports/validation_report.json',{'passed':False,'warnings':['Validation unavailable'],'hard_errors':[]})
-    if (bundle/'aggregated/results_summary.csv').is_file():run(bundle,resolved,summary,manifest,validation)
-    else:render_html(bundle,resolved,summary,manifest,validation)
+    if (bundle/'aggregated/results_summary.csv').is_file():run(bundle,resolved,summary,manifest,validation,sla_economic_beta=sla_economic_beta)
+    else:render_html(bundle,resolved,summary,manifest,validation,sla_economic_beta=sla_economic_beta)
     return bundle/'reports/experiment_report.html'
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description='Regenerate reports from an existing frozen experiments_v2 bundle without running jobs.')
     parser.add_argument('--bundle',required=True,type=Path)
-    print(regenerate(parser.parse_args().bundle))
+    parser.add_argument('--sla-economic-beta',type=float,help='Common report-only payment beta; recorded in calculation provenance, never edits the frozen config.')
+    args=parser.parse_args()
+    print(regenerate(args.bundle,sla_economic_beta=args.sla_economic_beta))

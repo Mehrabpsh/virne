@@ -371,6 +371,7 @@ methods:
 metrics:
 - acceptance_rate
 - long_term_r2c_ratio
+- sla_adjusted_time_r2c_ratio
 - sla_satisfaction_rate
 - sla_service_rate_all_arrivals
 - mean_sla_shortfall
@@ -390,6 +391,7 @@ reporting:
   - pdf
   generate_markdown_report: true
   assessment_beta: 1.0
+  sla_economic_beta: 0.23142476412881738
 calibration_suggestions:
   multiplicative_beta_scale:
     value: 0.7089758522401187

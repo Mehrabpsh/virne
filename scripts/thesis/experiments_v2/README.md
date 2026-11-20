@@ -127,6 +127,58 @@ mask padding and redundancy=none. RA combine/normalization/alpha and EVNE initia
 are explicit. `history: {initialization: zero}` creates deterministic arrays matching the
 resolved PN size. No Paper-9 exact reward, backup, potential reward or solver redesign is added.
 
+## SLA adjusted payment and Time R/C
+
+`reporting.sla_economic_beta` is one common payment parameter for **all** methods,
+including original PPO and heuristics. It does not change training rewards or
+checkpoint signatures. Old YAMLs default this field to `reporting.assessment_beta`;
+the full paired example explicitly uses `0.23142476412881738`.
+
+For each admitted service, define `s = max(0, (SLA - A)/(1 - SLA))` and payment
+factor `exp(-beta*s)`. Meeting SLA receives full nominal payment. The metric is
+`sum(R * lifetime * payment_factor) / sum(C * lifetime)`, using Virne's original
+nominal revenue and resource cost. Cost includes the full original lifetime:
+reservations remain during an outage. No admissions or zero cost gives null.
+
+- `sla_adjusted_time_r2c_ratio` is the primary, mode-specific payment score.
+- `predicted_sla_adjusted_time_r2c_ratio` uses analytical availability, in either mode.
+- `observed_sla_adjusted_time_r2c_ratio` uses measured uptime/lifetime, in live mode
+  only; it stays null in failure-free evaluation.
+
+These are cost/lifetime-weighted aggregate ratios, not averages of per-service
+utilities or shaped training rewards. An analytical score under a nonlinear
+SLA contract is not expected finite-lifetime payment. A live-minus-free difference
+in the primary score compares observed and analytical bases, so it does not isolate
+the effect of outages. Retain raw R/C, acceptance and SLA/service-delivery metrics.
+
+Collection adds the payment metrics to new runs automatically. HTML, Markdown and
+JSON reports include them even when the old YAML metric list omitted the primary
+metric. Configured numeric payment fields can also be listed under `metrics`.
+The report's dedicated primary plot uses the same separated model/scenario SDs.
+
+Existing copied bundles can be assessed without training or simulation:
+
+```bash
+python -m scripts.thesis.experiments_v2.analysis.report \
+  --bundle /absolute/path/to/existing/bundle \
+  --sla-economic-beta 0.23142476412881738
+```
+
+The optional CLI parameter overrides only the report calculation, with its origin
+recorded in `reports/sla_economics_provenance.json`; the frozen YAML is untouched.
+For legacy bundles without the new setting, explicitly pass the agreed beta rather
+than relying on their former assessment default. Report generation derives values
+from portable `relative_directory` paths, independently matches observed services
+by request ID and original lifetime, and checks totals against the original ledger.
+It never reuses per-method `assessment_utility` or payment factors.
+
+Derived artifacts are `reports/sla_economics_per_run.csv`,
+`sla_economics_summary.csv`, `sla_economics_services.csv.gz` and the provenance JSON
+(input hashes, calculator hash, beta and coverage). Existing raw records, frozen
+configs and `aggregated/` files are not overwritten by report regeneration.
+Missing legacy inputs remain explicitly unmeasured with coverage diagnostics;
+inconsistent admissions, lifetimes or costs fail assessment.
+
 ## Calibration contract
 
 Calibration searches **only** `calibration.search_space` environment paths and uses only

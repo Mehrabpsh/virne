@@ -13,7 +13,8 @@ def mode_groups(frame):
 
 def mode_metrics(metrics,mode):
     from virne.reliability.live_failures import LIVE_METRICS
-    return [m for m in metrics if mode!='failure_free' or m not in LIVE_METRICS]
+    from .sla_economics import OBSERVED_METRICS
+    return [m for m in metrics if mode!='failure_free' or m not in (*LIVE_METRICS,*OBSERVED_METRICS)]
 
 
 def tables(frame,metrics):
@@ -31,6 +32,8 @@ def _tables(frame,metrics):
               'reliability_enabled','reliability_mode','objective','reward','beta','topology','assessment_mode',
               'assessment_provenance','input_hash','source_commit','model_reload_observed','evaluation_mode',
               'live_failures_enabled','failure_trace_sha256','runtime_inputs_verified'}
+    from .sla_economics import METADATA
+    metadata.update(METADATA)
     numeric=[]
     frame=frame.copy()
     for column in frame.columns:

@@ -31,6 +31,9 @@ def resolve(path, sets=(), virne_sets=(), subset=None, *, document=None):
     if isinstance(runtime,dict) and isinstance(runtime['tensorboard'],dict):
         for key,value in {'enabled':False,'flush_secs':10,'request_interval':1}.items():
             runtime['tensorboard'].setdefault(key,value)
+    reporting=data.get('reporting',{}) if isinstance(data,dict) else {}
+    if isinstance(reporting,dict):
+        reporting.setdefault('sla_economic_beta',reporting.get('assessment_beta'))
     overrides=parse_assignments(sets);raw=parse_assignments(virne_sets)
     for key,value in overrides:set_path(data,key,value)
     validate(data)

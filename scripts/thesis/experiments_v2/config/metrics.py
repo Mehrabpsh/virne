@@ -15,6 +15,8 @@ def supported():
     fields.update(METRICS)
     from virne.reliability.live_failures import LIVE_METRICS
     fields.update(LIVE_METRICS)
+    from ..analysis.sla_economics import METRICS as SLA_ECONOMIC_METRICS
+    fields.update(SLA_ECONOMIC_METRICS)
     fields.update(['sla_accepted_count','v_net_count','runtime'])
     fields.update(prefix+name for prefix in ('mean_','peak_') for name in ('p_net_node_resource_utilization','p_net_link_resource_utilization'))
     return fields
